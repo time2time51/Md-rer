@@ -1,0 +1,37 @@
+name: Build SGDK ROM
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build with SGDK (Docker)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE":/m68k -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
+
+      - name: Upload ROM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rom
+          path: out/rom.bin
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rom
+          path: .
+      - name: Create GitHub Release and attach rom.bin
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rom.bin
