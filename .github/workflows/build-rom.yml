@@ -12,9 +12,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 🔧 Fix permissions so the container can write into the workspace
+      - name: Make workspace writable for container
+        run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
+
       - name: Build with SGDK (Docker)
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE":/m68k -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/m68k \
+            -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
 
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
