@@ -2,12 +2,12 @@ name: Build & Release SGDK ROM
 
 on:
   push:
-    branches: [ "main" ]         # build normal sur main
-    tags: [ "v*" ]               # ⚠️ déclenche aussi sur les tags (v0.1.0, v1.0, etc.)
+    branches: [ "main" ]
+    tags: [ "v*" ]               # déclenche aussi sur les tags (ex: v0.1.0, v1.0)
   workflow_dispatch:
 
 permissions:
-  contents: write                # ⚠️ nécessaire pour créer la Release
+  contents: write                # nécessaire pour créer une Release
 
 jobs:
   build:
@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Donner les droits d'écriture au conteneur
+      # Donne les droits d'écriture au conteneur
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
@@ -26,7 +26,10 @@ jobs:
             -v "$GITHUB_WORKSPACE":/m68k \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
 
-      # Renommer le binaire avec le nom du repo + la version si on est sur un tag
+      # ✅ Redonne les droits au runner pour manipuler les fichiers générés
+      - name: Fix back permissions for runner
+        run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
+
       - name: Prepare ROM filename
         id: name
         run: |
@@ -51,7 +54,6 @@ jobs:
           path: ${{ steps.name.outputs.outname }}
 
   release:
-    # Ne lance ce job QUE si on est sur un tag
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
