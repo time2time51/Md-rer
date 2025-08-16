@@ -3,7 +3,7 @@ name: Build & Release SGDK ROM
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ]               # déclenche aussi sur les tags (ex: v0.1.0, v1.0)
+    tags: [ "v*" ]               # déclenche aussi sur les tags (v0.1.0, v1.0…)
   workflow_dispatch:
 
 permissions:
@@ -16,6 +16,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Ajoute un header avec la date/numéro de build (pour différencier chaque ROM)
+      - name: Generate buildinfo.h
+        run: |
+          mkdir -p inc
+          {
+            echo '#pragma once'
+            echo '#define BUILD_TAG "'${GITHUB_SHA:0:7}' '#${GITHUB_RUN_NUMBER} ' $(date -u +%Y-%m-%dT%H:%M:%SZ)'"'
+          } > inc/buildinfo.h
+          cat inc/buildinfo.h
+
       # Donne les droits d'écriture au conteneur
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
@@ -26,7 +36,7 @@ jobs:
             -v "$GITHUB_WORKSPACE":/m68k \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
 
-      # ✅ Redonne les droits au runner pour manipuler les fichiers générés
+      # Redonne les droits au runner (pour renommer / uploader la ROM)
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
@@ -37,8 +47,8 @@ jobs:
           if [ ! -f "$ROM" ]; then
             echo "ROM not found"; exit 1
           fi
-          REPO="${GITHUB_REPOSITORY##*/}"            # ex: Md-rer
-          VER="${GITHUB_REF_NAME}"                   # ex: v0.1.0 ou main
+          REPO="${GITHUB_REPOSITORY##*/}"
+          VER="${GITHUB_REF_NAME}"
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             OUT="${REPO}-${VER}.bin"
           else
