@@ -9,6 +9,10 @@ static u16 joy;
 static Sprite *p1, *p2;
 static fix16 p1x, p1y, p2x, p2y;
 
+// Compteurs locaux
+static u32 introFrames = 0;
+static u32 gameFrames  = 0;
+
 // Texte d'intro (défilement simple)
 static const char *intro_lines[] = {
     "Reims, la nuit. La ville se meurt.",
@@ -23,7 +27,7 @@ static const char *intro_lines[] = {
 
 static void drawImage(const Image *img)
 {
-    VDP_setPalette(PAL1, img->palette->data);
+    PAL_setPalette(PAL1, img->palette->data); // (ex-VDP_setPalette)
     VDP_drawImageEx(
         BG_A,
         img,
@@ -35,7 +39,7 @@ static void drawImage(const Image *img)
 
 static void showIntro(void)
 {
-    tileIndex = TILE_USERINDEX;
+    tileIndex = TILE_USER_INDEX;   // (ex-TILE_USERINDEX)
     drawImage(&bg_intro);
 
     // Pose le texte d'intro (ligne de base = 24)
@@ -46,16 +50,15 @@ static void showIntro(void)
 
 static void updateIntro(void)
 {
-    static u32 frames = 0; 
-    frames++;
+    introFrames++;
 
-    // Scroll du texte: toutes les ~0.5s on remonte d'une ligne
-    if ((frames % 30) == 0)
+    // Scroll du texte: toutes les ~0.5s (30 frames) on remonte d'une ligne
+    if ((introFrames % 30) == 0)
     {
         VDP_clearText(0, 0, 40);
         VDP_clearText(0, 2, 40);
 
-        s16 shift = -(frames / 30);
+        s16 shift = -(introFrames / 30);
         s16 baseY = 24 + shift;
 
         for (u16 i = 0; i < sizeof(intro_lines)/sizeof(intro_lines[0]); i++)
@@ -66,13 +69,13 @@ static void updateIntro(void)
     }
 
     // Après 90s ou si START -> ecran titre
-    if (frames > (90*60) || (joy & BUTTON_START))
+    if (introFrames > (90*60) || (joy & BUTTON_START))
     {
         state = STATE_TITLE;
         VDP_clearPlane(BG_A, TRUE);
         VDP_clearPlane(BG_B, TRUE);
 
-        tileIndex = TILE_USERINDEX;
+        tileIndex = TILE_USER_INDEX;
         drawImage(&bg_title);
         VDP_drawText("PRESS START", 12, 20);
     }
@@ -81,25 +84,26 @@ static void updateIntro(void)
 static void startGame(void)
 {
     state = STATE_GAME;
+    gameFrames = 0;
 
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);
 
-    tileIndex = TILE_USERINDEX;
+    tileIndex = TILE_USER_INDEX;
     drawImage(&stage1);
 
     SPR_init();
 
     // Palettes de sprites
-    VDP_setPalette(PAL2, hero1.palette->data);
-    VDP_setPalette(PAL3, hero2.palette->data);
+    PAL_setPalette(PAL2, hero1.palette->data);  // (ex-VDP_setPalette)
+    PAL_setPalette(PAL3, hero2.palette->data);
 
     // Positions de depart
     p1x = FIX16(60);  p1y = FIX16(140);
     p2x = FIX16(180); p2y = FIX16(140);
 
-    p1 = SPR_addSprite(&hero1, fix16ToInt(p1x), fix16ToInt(p1y), TILE_ATTR(PAL2, 0, FALSE, FALSE));
-    p2 = SPR_addSprite(&hero2, fix16ToInt(p2x), fix16ToInt(p2y), TILE_ATTR(PAL3, 0, FALSE, FALSE));
+    p1 = SPR_addSprite(&hero1, F16_toInt(p1x), F16_toInt(p1y), TILE_ATTR(PAL2, 0, FALSE, FALSE));
+    p2 = SPR_addSprite(&hero2, F16_toInt(p2x), F16_toInt(p2y), TILE_ATTR(PAL3, 0, FALSE, FALSE));
 }
 
 static void updateTitle(void)
@@ -109,13 +113,16 @@ static void updateTitle(void)
 
 static void updateGame(void)
 {
+    gameFrames++;
+
     // P1: gauche/droite pour bouger, B pour punch
     s16 vx = 0;
     if (joy & BUTTON_LEFT)  { vx = -1; SPR_setHFlip(p1, TRUE); }
     if (joy & BUTTON_RIGHT) { vx = +1; SPR_setHFlip(p1, FALSE); }
 
-    p1x = FIX16(fix16ToInt(p1x) + vx);
-    SPR_setPosition(p1, fix16ToInt(p1x), fix16ToInt(p1y));
+    // p1x += vx (fix16)
+    p1x = FIX16(F16_toInt(p1x) + vx);
+    SPR_setPosition(p1, F16_toInt(p1x), F16_toInt(p1y));
 
     // Petit punch visuel en changeant de frame pendant quelques ticks
     static u16 punchTimer = 0;
@@ -125,13 +132,13 @@ static void updateGame(void)
     // Animation: [2 idle][4 walk][2 punch] sur une seule ligne de spritesheet
     static u16 frame = 0;
     if (punchTimer > 0) frame = 2 + 4 + ((punchTimer > 6) ? 0 : 1);
-    else if (vx != 0)   frame = 2 + ((systemFrameCounter >> 2) & 3);
-    else                frame = (systemFrameCounter >> 3) & 1;
+    else if (vx != 0)   frame = 2 + ((gameFrames >> 2) & 3); // marche
+    else                frame = (gameFrames >> 3) & 1;        // idle
 
     SPR_setFrame(p1, frame);
 
     // P2: animation idle tranquille
-    SPR_setFrame(p2, (systemFrameCounter >> 3) & 1);
+    SPR_setFrame(p2, (gameFrames >> 3) & 1);
 
     SPR_update();
 }
@@ -148,7 +155,7 @@ int main(void)
 
     VDP_setScreenWidth320();
     VDP_setScreenHeight224();
-    VDP_setPaletteColors(0, (u16*)palette_black, 64);
+    PAL_setColors(0, (u16*)palette_black, 64);  // (ex-VDP_setPaletteColors)
 
     showIntro();
 
