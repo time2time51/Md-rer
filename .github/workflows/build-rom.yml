@@ -1,9 +1,13 @@
-name: Build SGDK ROM
+name: Build & Release SGDK ROM
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main" ]         # build normal sur main
+    tags: [ "v*" ]               # ⚠️ déclenche aussi sur les tags (v0.1.0, v1.0, etc.)
   workflow_dispatch:
+
+permissions:
+  contents: write                # ⚠️ nécessaire pour créer la Release
 
 jobs:
   build:
@@ -12,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 🔧 Fix permissions so the container can write into the workspace
+      # Donner les droits d'écriture au conteneur
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
@@ -22,13 +26,32 @@ jobs:
             -v "$GITHUB_WORKSPACE":/m68k \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
 
+      # Renommer le binaire avec le nom du repo + la version si on est sur un tag
+      - name: Prepare ROM filename
+        id: name
+        run: |
+          ROM="out/rom.bin"
+          if [ ! -f "$ROM" ]; then
+            echo "ROM not found"; exit 1
+          fi
+          REPO="${GITHUB_REPOSITORY##*/}"            # ex: Md-rer
+          VER="${GITHUB_REF_NAME}"                   # ex: v0.1.0 ou main
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            OUT="${REPO}-${VER}.bin"
+          else
+            OUT="${REPO}.bin"
+          fi
+          cp "$ROM" "$OUT"
+          echo "outname=$OUT" >> "$GITHUB_OUTPUT"
+
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
           name: rom
-          path: out/rom.bin
+          path: ${{ steps.name.outputs.outname }}
 
   release:
+    # Ne lance ce job QUE si on est sur un tag
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
@@ -37,7 +60,8 @@ jobs:
         with:
           name: rom
           path: .
-      - name: Create GitHub Release and attach rom.bin
+      - name: Create GitHub Release and attach ROM
         uses: softprops/action-gh-release@v2
         with:
-          files: rom.bin
+          files: ./*.bin
+          generate_release_notes: true
