@@ -1,6 +1,5 @@
 #include <genesis.h>
 #include "resources.h"
-#include "buildinfo.h"   // généré par le workflow Actions
 
 typedef enum { STATE_INTRO, STATE_TITLE, STATE_GAME } GameState;
 
@@ -38,9 +37,6 @@ static void showIntro(void)
 {
     tileIndex = TILE_USERINDEX;
     drawImage(&bg_intro);
-
-    // Affiche le tag de build pour verifier que la ROM est bien nouvelle
-    VDP_drawText("Build: " BUILD_TAG, 1, 1);
 
     // Pose le texte d'intro (ligne de base = 24)
     s16 baseY = 24;
