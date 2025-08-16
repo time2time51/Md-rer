@@ -16,17 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Ajoute un header avec la date/numéro de build (pour différencier chaque ROM)
-      - name: Generate buildinfo.h
-        run: |
-          mkdir -p inc
-          {
-            echo '#pragma once'
-            echo '#define BUILD_TAG "'${GITHUB_SHA:0:7}' '#${GITHUB_RUN_NUMBER} ' $(date -u +%Y-%m-%dT%H:%M:%SZ)'"'
-          } > inc/buildinfo.h
-          cat inc/buildinfo.h
-
-      # Donne les droits d'écriture au conteneur
+      # Donne les droits d'écriture au conteneur Docker (UID 1000 dans l'image SGDK)
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
