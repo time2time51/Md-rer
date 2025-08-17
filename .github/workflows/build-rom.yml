@@ -36,7 +36,7 @@ jobs:
           echo "Res dir     = $RES_DIR"
           ls -la "$RES_DIR" || true
 
-      # 2) CONVERSION ffmpeg AVANT tout chown
+      # 2) CONVERSION ffmpeg AVANT le chown
       - name: Convert MP3 -> WAV (ffmpeg)
         shell: bash
         run: |
@@ -50,11 +50,11 @@ jobs:
           echo "Trouve: $INTRO_MP3"
           ffmpeg -y -i "$RES_DIR/$INTRO_MP3" -ar 22050 -ac 1 "$RES_DIR/intro.wav"
 
-      # 3) Donner les droits d'écriture au conteneur Docker (UID 1000)
+      # 3) Droits d'écriture pour Docker (UID 1000)
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # 4) Conversion WAV -> XGM via SGDK (dans Docker)
+      # 4) WAV -> XGM via SGDK (dans Docker)
       - name: Convert WAV -> XGM (xgmtool)
         shell: bash
         run: |
@@ -64,9 +64,11 @@ jobs:
             -w /m68k \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
             java -jar /sgdk/tools/xgmtool.jar "$RES_DIR/intro.wav" "$RES_DIR/intro.xgm"
+          echo "intro.xgm genere dans $RES_DIR:"
+          ls -la "$RES_DIR" || true
 
-      # 5) Build du projet (racine ou Md-rer/)
-            - name: Build with SGDK (Docker)
+      # 5) Build du projet (appel explicite à make)
+      - name: Build with SGDK (Docker)
         shell: bash
         run: |
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
