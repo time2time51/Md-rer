@@ -16,64 +16,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Localiser projet/res (racine ou Md-rer/)
-      - name: Locate project/res folders
+      # Localiser projet (racine ou Md-rer/) pour l'appel à make
+      - name: Locate project dir
         id: paths
         shell: bash
         run: |
-          if [ -d "Md-rer/res" ]; then
+          if [ -f "Md-rer/makefile" ] || [ -f "Md-rer/Makefile" ]; then
             PROJECT_DIR="Md-rer"
-            RES_DIR="Md-rer/res"
-          elif [ -d "res" ]; then
+          elif [ -f "makefile" ] || [ -f "Makefile" ]; then
             PROJECT_DIR="."
-            RES_DIR="res"
           else
-            echo "ERREUR: dossier res/ introuvable (ni ./res ni ./Md-rer/res)." ; exit 1
+            echo "Aucun makefile trouvé (ni à la racine ni dans Md-rer/)." ; exit 1
           fi
-          echo "project_dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
-          echo "res_dir=$RES_DIR" >> $GITHUB_OUTPUT
-          echo "Project dir = $PROJECT_DIR"
-          echo "Res dir     = $RES_DIR"
-          ls -la "$RES_DIR" || true
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Using project dir: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR" || true
 
-      # 2) MP3 -> WAV (avant chown)
-      - name: Convert MP3 -> WAV (ffmpeg)
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          INTRO_MP3=$(ls "$RES_DIR" | grep -iE '^intro\.mp3$' || true)
-          if [ -z "$INTRO_MP3" ]; then
-            echo "ERREUR: Intro.mp3 introuvable dans $RES_DIR" ; ls -la "$RES_DIR"; exit 1
-          fi
-          echo "Trouve: $INTRO_MP3"
-          ffmpeg -y -i "$RES_DIR/$INTRO_MP3" -ar 22050 -ac 1 "$RES_DIR/intro.wav"
-
-      # 3) Droits d'écriture pour Docker (UID 1000)
+      # Donner les droits d'écriture au conteneur (UID 1000)
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # 4) WAV -> XGM via /sgdk/bin/xgmtool (on passe RES_DIR au conteneur)
-      - name: Convert WAV -> XGM (xgmtool binary)
-        shell: bash
-        run: |
-          RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          docker run --rm \
-            -e RES_DIR="$RES_DIR" \
-            -v "$GITHUB_WORKSPACE":/m68k \
-            -w /m68k \
-            --entrypoint /bin/sh \
-            -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-            -lc 'set -e; unset MAKEFLAGS GNUMAKEFLAGS; \
-                 echo "Inside container RES_DIR=$RES_DIR"; \
-                 ls -la "/m68k/$RES_DIR" || true; \
-                 [ -f "/m68k/$RES_DIR/intro.wav" ] || { echo "intro.wav introuvable dans /m68k/$RES_DIR"; exit 1; }; \
-                 /sgdk/bin/xgmtool "/m68k/$RES_DIR/intro.wav" "/m68k/$RES_DIR/intro.xgm"'
-          echo "intro.xgm genere dans $RES_DIR:"
-          ls -la "$RES_DIR" || true
-
-      # 5) Build SGDK (override entrypoint + unset MAKEFLAGS; make -j1)
+      # Build SGDK (désactive MAKEFLAGS et force make -j1)
       - name: Build with SGDK (Docker)
         shell: bash
         run: |
@@ -85,7 +48,7 @@ jobs:
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
             -lc 'unset MAKEFLAGS GNUMAKEFLAGS; make -j1'
 
-      # 6) Rendre les fichiers au runner puis packager la ROM
+      # Rendre les fichiers au runner (pour renommer/uploader)
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
