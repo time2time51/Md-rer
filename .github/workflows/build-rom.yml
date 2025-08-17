@@ -54,17 +54,33 @@ jobs:
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # 4) WAV -> XGM via xgmtool.jar (override entrypoint + unset MAKEFLAGS)
+      # 4) WAV -> XGM via xgmtool.jar (on cherche d'abord dans /sgdk/bin puis /sgdk/tools)
       - name: Convert WAV -> XGM (xgmtool.jar)
         shell: bash
         run: |
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
           docker run --rm \
+            -e RES_DIR="$RES_DIR" \
             -v "$GITHUB_WORKSPACE":/m68k \
             -w /m68k \
             --entrypoint /bin/sh \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-            -lc 'unset MAKEFLAGS GNUMAKEFLAGS; java -jar /sgdk/tools/xgmtool.jar "$RES_DIR/intro.wav" "$RES_DIR/intro.xgm"'
+            -lc '
+              set -e
+              if [ -f /sgdk/bin/xgmtool.jar ]; then
+                JAR=/sgdk/bin/xgmtool.jar
+              elif [ -f /sgdk/tools/xgmtool.jar ]; then
+                JAR=/sgdk/tools/xgmtool.jar
+              else
+                echo "xgmtool.jar introuvable. Contenu dispo :" >&2
+                echo "--- /sgdk/bin ---" >&2; ls -la /sgdk/bin || true
+                echo "--- /sgdk/tools ---" >&2; ls -la /sgdk/tools || true
+                exit 1
+              fi
+              echo "Utilisation de: $JAR"
+              unset MAKEFLAGS GNUMAKEFLAGS
+              java -jar "$JAR" "$RES_DIR/intro.wav" "$RES_DIR/intro.xgm"
+            '
           echo "intro.xgm genere dans $RES_DIR:"
           ls -la "$RES_DIR" || true
 
