@@ -66,14 +66,15 @@ jobs:
             java -jar /sgdk/tools/xgmtool.jar "$RES_DIR/intro.wav" "$RES_DIR/intro.xgm"
 
       # 5) Build du projet (racine ou Md-rer/)
-      - name: Build with SGDK (Docker)
+            - name: Build with SGDK (Docker)
         shell: bash
         run: |
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
           docker run --rm \
             -v "$GITHUB_WORKSPACE":/m68k \
             -w "/m68k/$PROJECT_DIR" \
-            -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
+            -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
+            make
 
       # 6) Rendre les fichiers au runner (pour renommer/uploader)
       - name: Fix back permissions for runner
