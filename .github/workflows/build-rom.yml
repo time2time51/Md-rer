@@ -16,16 +16,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Make workspace writable for container
-        run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
-
-      # Détecte le dossier projet (Md-rer/ ou racine) et le res/
+      # 1) Localiser le projet et res/ (racine ou Md-rer/)
       - name: Locate project/res folders
         id: paths
         shell: bash
         run: |
-          echo "== Repo tree =="
-          ls -la
           if [ -d "Md-rer/res" ]; then
             PROJECT_DIR="Md-rer"
             RES_DIR="Md-rer/res"
@@ -39,25 +34,27 @@ jobs:
           echo "res_dir=$RES_DIR" >> $GITHUB_OUTPUT
           echo "Project dir = $PROJECT_DIR"
           echo "Res dir     = $RES_DIR"
-          echo "Contenu res/:"
           ls -la "$RES_DIR" || true
 
-      # Installe ffmpeg et convertit MP3 -> WAV (22.05 kHz mono)
+      # 2) CONVERSION ffmpeg AVANT tout chown
       - name: Convert MP3 -> WAV (ffmpeg)
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          # Cherche un fichier Intro.mp3 / intro.mp3 (insensible à la casse)
           INTRO_MP3=$(ls "$RES_DIR" | grep -iE '^intro\.mp3$' || true)
           if [ -z "$INTRO_MP3" ]; then
-            echo "ERREUR: Intro.mp3 introuvable dans $RES_DIR" ; ls -la "$RES_DIR"; exit 1
+            echo "ERREUR: Intro.mp3 introuvable dans $RES_DIR"; ls -la "$RES_DIR"; exit 1
           fi
           echo "Trouve: $INTRO_MP3"
           ffmpeg -y -i "$RES_DIR/$INTRO_MP3" -ar 22050 -ac 1 "$RES_DIR/intro.wav"
 
-      # Convertit WAV -> XGM via l'outil SGDK (dans le container)
+      # 3) Donner les droits d'écriture au conteneur Docker (UID 1000)
+      - name: Make workspace writable for container
+        run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
+
+      # 4) Conversion WAV -> XGM via SGDK (dans Docker)
       - name: Convert WAV -> XGM (xgmtool)
         shell: bash
         run: |
@@ -67,10 +64,8 @@ jobs:
             -w /m68k \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
             java -jar /sgdk/tools/xgmtool.jar "$RES_DIR/intro.wav" "$RES_DIR/intro.xgm"
-          echo "intro.xgm genere dans $RES_DIR:"
-          ls -la "$RES_DIR" || true
 
-      # Build du projet (à la racine ou sous Md-rer/)
+      # 5) Build du projet (racine ou Md-rer/)
       - name: Build with SGDK (Docker)
         shell: bash
         run: |
@@ -80,6 +75,7 @@ jobs:
             -w "/m68k/$PROJECT_DIR" \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
 
+      # 6) Rendre les fichiers au runner (pour renommer/uploader)
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
@@ -101,7 +97,6 @@ jobs:
           fi
           cp "$ROM" "$OUT"
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
-          echo "Prepared $OUT"
 
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
