@@ -16,19 +16,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Locate project/res (root or Md-rer/)
+      # 1) Localiser project/res
       - name: Locate project/res folders
         id: paths
         shell: bash
         run: |
-          if [ -d "Md-rer/res" ]; then
+          if [ -f "Md-rer/Makefile" ]; then
             PROJECT_DIR="Md-rer"
             RES_DIR="Md-rer/res"
-          elif [ -d "res" ]; then
+          else
             PROJECT_DIR="."
             RES_DIR="res"
-          else
-            echo "ERREUR: dossier res/ introuvable (ni ./res ni ./Md-rer/res)."; exit 1
+          fi
+          if [ ! -d "$RES_DIR" ]; then
+            echo "ERREUR: $RES_DIR introuvable"; exit 1
           fi
           echo "project_dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
           echo "res_dir=$RES_DIR" >> $GITHUB_OUTPUT
@@ -36,73 +37,56 @@ jobs:
           echo "Res dir     = $RES_DIR"
           ls -la "$RES_DIR" || true
 
-      # 2) Préparer les PNG (taille + palette + tuile [0,0])
-      - name: Prepare PNGs for SGDK (resize/index/fix top-left tile)
+      # 2) Préparer PNGs (taille/index/palette)
+      - name: Prepare PNGs for SGDK (resize/index/fix tile 0)
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y imagemagick
-
+          sudo apt-get install -y imagemagick pngquant
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          FILES=("intro1.PNG" "intro2.PNG" "intro3.PNG" "Title.PNG")
-
-          for f in "${FILES[@]}"; do
-            if [ ! -f "$RES_DIR/$f" ]; then
-              echo "WARNING: $RES_DIR/$f manquant, on saute."
-              continue
-            fi
-
-            SRC="$RES_DIR/$f"
-            TMP="$RES_DIR/_tmp_$f"
-
-            # Resize + réduire à 64 couleurs
-            convert "$SRC" -resize 320x224\! -colors 64 -dither FloydSteinberg PNG8:"$TMP"
-
-            # Récupère la couleur du pixel [0,0]
-            TOPLEFT=$(convert "$TMP" -format "%[pixel:p{0,0}]" info:)
-            # Peint un bloc 8x8 en (0,0)
-            convert "$TMP" -draw "fill $TOPLEFT rectangle 0,0 7,7" PNG8:"$SRC"
-
-            rm -f "$TMP"
-            echo "OK: $SRC prêt pour ResComp."
+          mogrify -resize 320x224\! -background black -gravity center -extent 320x224 "$RES_DIR"/intro*.PNG "$RES_DIR"/Title.PNG
+          for f in "$RES_DIR"/intro*.PNG "$RES_DIR"/Title.PNG; do
+            pngquant --force --output "$f" --speed 1 32 "$f" || true
+            convert "$f" -colors 64 -type Palette "$f"
+            convert "$f" -define png:color-type=3 -define png:bit-depth=8 \
+              \( -size 8x8 xc:black \) -insert 0 +append "$f"
           done
+          echo "PNG prepared:"
+          ls -la "$RES_DIR"
 
-      # 3) (optionnel) Conversion Intro.mp3 -> WAV (si présent)
-      - name: Convert MP3 -> WAV (ffmpeg)
+      # 3) MP3 -> WAV (si Intro.mp3 présent)
+      - name: Convert MP3 -> WAV (ffmpeg) if Intro.mp3 exists
         shell: bash
         run: |
-          sudo apt-get install -y ffmpeg
+          sudo apt-get update && sudo apt-get install -y ffmpeg
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          INTRO_MP3=$(ls "$RES_DIR" | grep -iE '^intro\.mp3$' || true)
-          if [ -n "$INTRO_MP3" ]; then
-            ffmpeg -y -i "$RES_DIR/$INTRO_MP3" -ar 22050 -ac 1 "$RES_DIR/intro.wav"
-            echo "intro.wav généré."
+          if [ -f "$RES_DIR/Intro.mp3" ]; then
+            ffmpeg -y -i "$RES_DIR/Intro.mp3" -ar 22050 -ac 1 "$RES_DIR/intro.wav"
+            ls -la "$RES_DIR/intro.wav"
           else
-            echo "Pas de Intro.mp3 trouvé (OK si tu utilises VGZ)."
+            echo "Intro.mp3 absent; on saute la conversion."
           fi
 
-      # 4) Donner les droits à l’utilisateur du conteneur
+      # 4) Droits d'écriture pour le conteneur
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # 5) Build avec SGDK (Docker)
+      # 5) Construction dans le conteneur SGDK (FIX: lancer bash -lc "make -j1")
       - name: Build with SGDK (Docker)
         shell: bash
         run: |
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
           docker run --rm \
-            -e MAKEFLAGS= \
-            -e GNUMAKEFLAGS= \
+            -e MAKEFLAGS= -e GNUMAKEFLAGS= \
             -v "$GITHUB_WORKSPACE":/m68k \
             -w "/m68k/$PROJECT_DIR" \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-            make -j1
-
-      # 6) Rendre les fichiers au runner
+            /bin/bash -lc "make -j1"
+      
+      # 6) Rendre les fichiers au runner puis empaqueter la ROM
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
-      # 7) Préparer le nom du ROM
       - name: Prepare ROM filename
         id: name
         shell: bash
@@ -110,7 +94,7 @@ jobs:
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
           ROM="$PROJECT_DIR/out/rom.bin"
           if [ ! -f "$ROM" ]; then
-            echo "ROM not found at $ROM"; exit 1
+            echo "ROM not found at $ROM"; ls -la "$PROJECT_DIR/out" || true; exit 1
           fi
           REPO="${GITHUB_REPOSITORY##*/}"
           VER="${GITHUB_REF_NAME}"
@@ -122,7 +106,6 @@ jobs:
           cp "$ROM" "$OUT"
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
 
-      # 8) Upload ROM en artifact
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
