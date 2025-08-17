@@ -1,11 +1,10 @@
-# Intro scenes – découpées en 3 calques (ciel, immeubles, rue)
+# --- INTRO (3 fonds plein ecran) ---
+IMAGE intro1 "intro1.PNG" 0
+IMAGE intro2 "intro2.PNG" 0
+IMAGE intro3 "intro3.PNG" 0
 
-# === Scene 1 ===
-IMAGE scene1_sky     "scene1_sky.png"
-IMAGE scene1_city    "scene1_city.png"
-IMAGE scene1_street  "scene1_street.png"
+# --- ECRAN TITRE ---
+IMAGE title  "Title.PNG" 0
 
-# === Scene 2 ===
-IMAGE scene2_sky     "scene2_sky.png"
-IMAGE scene2_city    "scene2_city.png"
-IMAGE scene2_street  "scene2_street.png"
+# --- MUSIQUE (convertie automatiquement par le workflow) ---
+XGM intro_music "intro.xgm"
