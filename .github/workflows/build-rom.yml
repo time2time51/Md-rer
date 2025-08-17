@@ -54,17 +54,22 @@ jobs:
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # 4) WAV -> XGM via le binaire /sgdk/bin/xgmtool (override entrypoint + unset MAKEFLAGS)
+      # 4) WAV -> XGM via /sgdk/bin/xgmtool (on passe RES_DIR au conteneur)
       - name: Convert WAV -> XGM (xgmtool binary)
         shell: bash
         run: |
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
           docker run --rm \
+            -e RES_DIR="$RES_DIR" \
             -v "$GITHUB_WORKSPACE":/m68k \
             -w /m68k \
             --entrypoint /bin/sh \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-            -lc 'unset MAKEFLAGS GNUMAKEFLAGS; /sgdk/bin/xgmtool "$RES_DIR/intro.wav" "$RES_DIR/intro.xgm"'
+            -lc 'set -e; unset MAKEFLAGS GNUMAKEFLAGS; \
+                 echo "Inside container RES_DIR=$RES_DIR"; \
+                 ls -la "/m68k/$RES_DIR" || true; \
+                 [ -f "/m68k/$RES_DIR/intro.wav" ] || { echo "intro.wav introuvable dans /m68k/$RES_DIR"; exit 1; }; \
+                 /sgdk/bin/xgmtool "/m68k/$RES_DIR/intro.wav" "/m68k/$RES_DIR/intro.xgm"'
           echo "intro.xgm genere dans $RES_DIR:"
           ls -la "$RES_DIR" || true
 
