@@ -3,11 +3,11 @@ name: Build & Release SGDK ROM
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ]               # déclenche aussi sur les tags (v0.1.0, v1.0…)
+    tags: [ "v*" ]
   workflow_dispatch:
 
 permissions:
-  contents: write                # nécessaire pour créer une Release
+  contents: write
 
 jobs:
   build:
@@ -16,40 +16,58 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Localiser le dossier projet et res
+      # 1) Locate project/res (root or Md-rer/)
       - name: Locate project/res folders
         id: paths
+        shell: bash
         run: |
-          echo "project_dir=." >> "$GITHUB_OUTPUT"
-          echo "res_dir=res" >> "$GITHUB_OUTPUT"
+          if [ -d "Md-rer/res" ]; then
+            PROJECT_DIR="Md-rer"
+            RES_DIR="Md-rer/res"
+          elif [ -d "res" ]; then
+            PROJECT_DIR="."
+            RES_DIR="res"
+          else
+            echo "ERREUR: dossier res/ introuvable (ni ./res ni ./Md-rer/res)."; exit 1
+          fi
+          echo "project_dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
+          echo "res_dir=$RES_DIR" >> $GITHUB_OUTPUT
+          echo "Project dir = $PROJECT_DIR"
+          echo "Res dir     = $RES_DIR"
+          ls -la "$RES_DIR" || true
 
-      # Convertir MP3 -> WAV
+      # 2) MP3 -> WAV with ffmpeg (before chown)
       - name: Convert MP3 -> WAV (ffmpeg)
+        shell: bash
         run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          if [ -f "$RES_DIR/Intro.mp3" ]; then
-            sudo apt-get update
-            sudo apt-get install -y ffmpeg
-            ffmpeg -y -i "$RES_DIR/Intro.mp3" -ar 22050 -ac 1 "$RES_DIR/intro.wav"
+          INTRO_MP3=$(ls "$RES_DIR" | grep -iE '^intro\.mp3$' || true)
+          if [ -z "$INTRO_MP3" ]; then
+            echo "ERREUR: Intro.mp3 introuvable dans $RES_DIR"; ls -la "$RES_DIR"; exit 1
           fi
+          echo "Trouve: $INTRO_MP3"
+          ffmpeg -y -i "$RES_DIR/$INTRO_MP3" -ar 22050 -ac 1 "$RES_DIR/intro.wav"
 
-      # Convertir WAV -> XGM
-      - name: Convert WAV -> XGM (xgmtool)
-        run: |
-          RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          if [ -f "$RES_DIR/intro.wav" ]; then
-            docker run --rm \
-              -v "$GITHUB_WORKSPACE":/m68k \
-              -w /m68k/$RES_DIR \
-              registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-              xgmtool intro.wav intro.xgm
-          fi
-
-      # Donne les droits d'écriture au conteneur Docker (UID 1000 dans l'image SGDK)
+      # 3) Give write access to Docker (UID 1000 in SGDK image)
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # Compilation avec SGDK
+      # 4) WAV -> XGM using the JAR inside the container
+      - name: Convert WAV -> XGM (xgmtool.jar)
+        shell: bash
+        run: |
+          RES_DIR="${{ steps.paths.outputs.res_dir }}"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/m68k \
+            -w /m68k \
+            -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
+            java -jar /sgdk/tools/xgmtool.jar "$RES_DIR/intro.wav" "$RES_DIR/intro.xgm"
+          echo "intro.xgm genere dans $RES_DIR:"
+          ls -la "$RES_DIR" || true
+
+      # 5) Build the project (explicit make, clear MAKEFLAGS)
       - name: Build with SGDK (Docker)
         shell: bash
         run: |
@@ -62,16 +80,18 @@ jobs:
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
             make -j1
 
-      # Redonne les droits au runner (pour renommer / uploader la ROM)
+      # 6) Give files back to the runner, then package/upload ROM
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
       - name: Prepare ROM filename
         id: name
+        shell: bash
         run: |
-          ROM="out/rom.bin"
+          PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
+          ROM="$PROJECT_DIR/out/rom.bin"
           if [ ! -f "$ROM" ]; then
-            echo "ROM not found"; exit 1
+            echo "ROM not found at $ROM"; exit 1
           fi
           REPO="${GITHUB_REPOSITORY##*/}"
           VER="${GITHUB_REF_NAME}"
