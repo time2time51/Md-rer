@@ -3,11 +3,11 @@ name: Build & Release SGDK ROM
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ]        # déclenche aussi sur les tags (v0.1.0, v1.0…)
+    tags: [ "v*" ]
   workflow_dispatch:
 
 permissions:
-  contents: write         # nécessaire pour créer une Release
+  contents: write
 
 jobs:
   build:
@@ -16,48 +16,81 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Droits d’écriture pour le conteneur (UID 1000 dans l'image SGDK)
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # Convertit Md-rer/res/Intro.mp3 -> intro.wav (22.05 kHz mono)
-      - name: Convert Intro.mp3 -> intro.wav (ffmpeg)
+      # Détecte le dossier projet (Md-rer/ ou racine) et le res/
+      - name: Locate project/res folders
+        id: paths
+        shell: bash
+        run: |
+          echo "== Repo tree =="
+          ls -la
+          if [ -d "Md-rer/res" ]; then
+            PROJECT_DIR="Md-rer"
+            RES_DIR="Md-rer/res"
+          elif [ -d "res" ]; then
+            PROJECT_DIR="."
+            RES_DIR="res"
+          else
+            echo "ERREUR: dossier res/ introuvable (ni ./res ni ./Md-rer/res)."; exit 1
+          fi
+          echo "project_dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
+          echo "res_dir=$RES_DIR" >> $GITHUB_OUTPUT
+          echo "Project dir = $PROJECT_DIR"
+          echo "Res dir     = $RES_DIR"
+          echo "Contenu res/:"
+          ls -la "$RES_DIR" || true
+
+      # Installe ffmpeg et convertit MP3 -> WAV (22.05 kHz mono)
+      - name: Convert MP3 -> WAV (ffmpeg)
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          if [ -f "Md-rer/res/Intro.mp3" ]; then
-            ffmpeg -y -i "Md-rer/res/Intro.mp3" -ar 22050 -ac 1 "Md-rer/res/intro.wav"
-          else
-            echo "Intro.mp3 manquant dans Md-rer/res/"; exit 1
+          RES_DIR="${{ steps.paths.outputs.res_dir }}"
+          # Cherche un fichier Intro.mp3 / intro.mp3 (insensible à la casse)
+          INTRO_MP3=$(ls "$RES_DIR" | grep -iE '^intro\.mp3$' || true)
+          if [ -z "$INTRO_MP3" ]; then
+            echo "ERREUR: Intro.mp3 introuvable dans $RES_DIR" ; ls -la "$RES_DIR"; exit 1
           fi
+          echo "Trouve: $INTRO_MP3"
+          ffmpeg -y -i "$RES_DIR/$INTRO_MP3" -ar 22050 -ac 1 "$RES_DIR/intro.wav"
 
-      # Convertit intro.wav -> intro.xgm via l’outil SGDK (dans le container)
-      - name: Convert intro.wav -> intro.xgm (xgmtool)
+      # Convertit WAV -> XGM via l'outil SGDK (dans le container)
+      - name: Convert WAV -> XGM (xgmtool)
+        shell: bash
         run: |
+          RES_DIR="${{ steps.paths.outputs.res_dir }}"
           docker run --rm \
             -v "$GITHUB_WORKSPACE":/m68k \
             -w /m68k \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-            java -jar /sgdk/tools/xgmtool.jar Md-rer/res/intro.wav Md-rer/res/intro.xgm
+            java -jar /sgdk/tools/xgmtool.jar "$RES_DIR/intro.wav" "$RES_DIR/intro.xgm"
+          echo "intro.xgm genere dans $RES_DIR:"
+          ls -la "$RES_DIR" || true
 
-      # Build du projet dans le sous-dossier Md-rer/
+      # Build du projet (à la racine ou sous Md-rer/)
       - name: Build with SGDK (Docker)
+        shell: bash
         run: |
+          PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
           docker run --rm \
             -v "$GITHUB_WORKSPACE":/m68k \
-            -w /m68k/Md-rer \
+            -w "/m68k/$PROJECT_DIR" \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
 
-      # Rends les fichiers au runner (pour renommer/uploader)
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
       - name: Prepare ROM filename
         id: name
+        shell: bash
         run: |
-          ROM="Md-rer/out/rom.bin"
+          PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
+          ROM="$PROJECT_DIR/out/rom.bin"
           if [ ! -f "$ROM" ]; then
-            echo "ROM not found"; exit 1
+            echo "ROM not found at $ROM"; exit 1
           fi
           REPO="${GITHUB_REPOSITORY##*/}"
           VER="${GITHUB_REF_NAME}"
@@ -68,6 +101,7 @@ jobs:
           fi
           cp "$ROM" "$OUT"
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
+          echo "Prepared $OUT"
 
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
