@@ -36,56 +36,45 @@ jobs:
           echo "Res dir     = $RES_DIR"
           ls -la "$RES_DIR" || true
 
-      # 2) Resize/prepare PNGs for SGDK
-      - name: Prepare PNGs for SGDK (resize/index/fix transparency)
+      # 2) Préparation des PNGs (forçage truecolor + resize 320x224)
+      - name: Prepare PNGs for SGDK (resize + force truecolor)
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y imagemagick
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
+          shopt -s nullglob
           for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-            [ -f "$img" ] || continue
             echo "Processing $img"
-            convert "$img" -resize 320x224\! -background black -alpha remove -alpha off "$img"
+            convert "$img" \
+              -resize 320x224\! \
+              -background black -alpha remove -alpha off \
+              -depth 8 -type truecolor -define png:color-type=2 \
+              "$img"
           done
 
-      # 3) MP3 -> WAV with ffmpeg
-      - name: Convert MP3 -> WAV (ffmpeg)
-        shell: bash
-        run: |
-          sudo apt-get install -y ffmpeg
-          RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          INTRO_MP3=$(ls "$RES_DIR" | grep -iE '^intro\.mp3$' || true)
-          if [ -n "$INTRO_MP3" ]; then
-            echo "Conversion $INTRO_MP3 -> intro.wav"
-            ffmpeg -y -i "$RES_DIR/$INTRO_MP3" -ar 22050 -ac 1 "$RES_DIR/intro.wav"
-          else
-            echo "Pas de intro.mp3 trouvé, skip..."
-          fi
-
-      # 4) Give write access to Docker (UID 1000 in SGDK image)
+      # 3) Make workspace writable for container
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # 5) Build the project (fix entrypoint problem)
+      # 4) Build the project (explicit make)
       - name: Build with SGDK (Docker)
         shell: bash
         run: |
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
           docker run --rm \
-            --entrypoint /bin/bash \
             -e MAKEFLAGS= \
             -e GNUMAKEFLAGS= \
             -v "$GITHUB_WORKSPACE":/m68k \
             -w "/m68k/$PROJECT_DIR" \
-            registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-            -lc 'make -j1'
+            -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
+            make -j1
 
-      # 6) Fix back permissions for runner
+      # 5) Restore permissions for runner
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
-      # 7) Prepare ROM filename
+      # 6) Prepare ROM filename
       - name: Prepare ROM filename
         id: name
         shell: bash
@@ -105,7 +94,7 @@ jobs:
           cp "$ROM" "$OUT"
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
 
-      # 8) Upload ROM artifact
+      # 7) Upload ROM artifact
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
