@@ -68,15 +68,17 @@ jobs:
           ls -la "$RES_DIR" || true
 
       # 5) Build du projet (appel explicite à make)
-      - name: Build with SGDK (Docker)
+            - name: Build with SGDK (Docker)
         shell: bash
         run: |
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
           docker run --rm \
+            -e MAKEFLAGS= \
+            -e GNUMAKEFLAGS= \
             -v "$GITHUB_WORKSPACE":/m68k \
             -w "/m68k/$PROJECT_DIR" \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-            make
+            make -j1
 
       # 6) Rendre les fichiers au runner (pour renommer/uploader)
       - name: Fix back permissions for runner
