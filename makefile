@@ -1,17 +1,10 @@
-# --- Projet SGDK minimal ---
-# nom de la ROM (sans extension)
-TARGET := rom
+# --- Minimal SGDK makefile ---
+# ROM name (output will be out/rom.bin)
+PROJECT_NAME := rom
 
-# dossiers du projet
-SRCDIR := src
-INCDIR := inc
-RESDIR := res
-BINDIR := out
-LIBDIR :=
+# Sources & resources folders
+SRC := src
+RES := res
 
-# Active la compression LZ4W des ressources (optionnel)
-RESCOMPFLAGS := -z
-
-# Inclut le makefile générique de SGDK dans le conteneur
-SGDK := /sgdk
-include $(SGDK)/makefile.gen
+# Include SGDK rules from the Docker image
+include /sgdk/makefile.gen
