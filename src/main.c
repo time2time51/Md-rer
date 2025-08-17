@@ -1,13 +1,20 @@
 #include <genesis.h>
 #include "resources.h"
 
-typedef enum { STATE_INTRO, STATE_TITLE } GameState;
-static GameState state = STATE_INTRO;
+// ------------ Config ------------
+#define FPS               60
+#define INTRO_TOTAL_SEC   90
+#define BG2_AT_SEC        30
+#define BG3_AT_SEC        60
+#define TICKS_PER_LINE    30   // 0,5 s par “ligne” de scroll
 
-static u16 tileIndex;
-static u16 joy;
+typedef enum { ST_INTRO, ST_TITLE } GameState;
+static GameState g_state = ST_INTRO;
 
-// Texte d'intro (défilement sur ~1m30)
+static u16 g_tileIndex;
+static u16 g_joy;
+
+// --------- Texte intro (scroll vers le bas) ---------
 static const char *intro_lines[] = {
     "Reims, la nuit. La ville se meurt.",
     "La corruption et la drogue rongent les rues.",
@@ -26,85 +33,100 @@ static const char *intro_lines[] = {
     "",
     "Appuie sur START pour passer."
 };
+#define NB_LINES (sizeof(intro_lines)/sizeof(intro_lines[0]))
 
-static void drawImage(const Image *img, u16 pal)
+// ------------ Utils ------------
+static void drawFullImage(const Image* img, u16 pal)
 {
-    VDP_setPalette(pal, img->palette->data);
+    PAL_setPalette(pal, img->palette->data, DMA);
     VDP_drawImageEx(
-        BG_A,
-        img,
-        TILE_ATTR_FULL(pal, FALSE, FALSE, FALSE, tileIndex),
+        BG_A, img,
+        TILE_ATTR_FULL(pal, FALSE, FALSE, FALSE, g_tileIndex),
         0, 0, FALSE, TRUE
     );
-    tileIndex += img->tileset->numTile;
+    g_tileIndex += img->tileset->numTile;
 }
 
-static void showIntro(void)
+static void showTitle(void)
 {
-    tileIndex = TILE_USERINDEX;
-
-    // Scene 1 (ciel + ville + rue)
-    drawImage(&scene1_sky, PAL1);
-    drawImage(&scene1_city, PAL2);
-    drawImage(&scene1_street, PAL3);
-
-    // Premier texte affiché
-    s16 baseY = 24;
-    for (u16 i = 0; i < sizeof(intro_lines)/sizeof(intro_lines[0]); i++)
-        VDP_drawText(intro_lines[i], 4, baseY + (s16)i*2);
+    g_tileIndex = TILE_USER_INDEX;
+    VDP_clearPlane(BG_A, TRUE);
+    drawFullImage(&title, PAL0);          // Title.PNG
 }
 
-static void updateIntro(void)
+// ------------ Intro ------------
+static void playIntro(void)
 {
-    static u32 frames = 0;
-    frames++;
+    u32 frame = 0;
+    u16 blink = 0;
 
-    // Scroll du texte
-    if ((frames % 30) == 0)
+    // Musique
+    XGM_startPlay(&intro_music);
+    XGM_setLoopNumber(-1);
+
+    // Premier fond
+    g_tileIndex = TILE_USER_INDEX;
+    VDP_clearPlane(BG_A, TRUE);
+    drawFullImage(&intro1, PAL0);
+
+    // Texte part au-dessus et descend
+    s16 baseY = -(s16)NB_LINES * 2;
+
+    while (frame < INTRO_TOTAL_SEC * FPS)
     {
-        VDP_clearPlane(BG_A, TRUE);
-
-        s16 shift = -(frames / 30);
-        s16 baseY = 24 + shift;
-
-        for (u16 i = 0; i < sizeof(intro_lines)/sizeof(intro_lines[0]); i++)
+        // Changement d’image
+        if (frame == BG2_AT_SEC * FPS)
         {
-            s16 y = baseY + (s16)i*2;
-            if (y >= 0 && y < 28)
-                VDP_drawText(intro_lines[i], 4, y);
+            g_tileIndex = TILE_USER_INDEX;
+            VDP_clearPlane(BG_A, TRUE);
+            drawFullImage(&intro2, PAL0);
         }
+        else if (frame == BG3_AT_SEC * FPS)
+        {
+            g_tileIndex = TILE_USER_INDEX;
+            VDP_clearPlane(BG_A, TRUE);
+            drawFullImage(&intro3, PAL0);
+        }
+
+        // Scroll texte
+        if ((frame % TICKS_PER_LINE) == 0)
+        {
+            for (u16 y = 0; y < 28; y++) VDP_clearText(0, y, 40);
+
+            s16 yStart = baseY + (s16)(frame / TICKS_PER_LINE);
+            for (u16 i = 0; i < NB_LINES; i++)
+            {
+                s16 y = yStart + (s16)i * 2;
+                if (y >= 0 && y < 28)
+                    VDP_drawText(intro_lines[i], 2, y);
+            }
+        }
+
+        // Blink "START=SKIP"
+        blink++;
+        if ((blink & 31) == 0)
+            VDP_drawText(((blink & 32) ? "                    " : "START=SKIP"), 12, 26);
+
+        // Skip
+        g_joy = JOY_readJoypad(JOY_1);
+        if (g_joy & BUTTON_START) break;
+
+        frame++;
+        SYS_doVBlankProcess();
     }
 
-    // Changer de scene apres ~45s
-    if (frames == 45*60)
-    {
-        tileIndex = TILE_USERINDEX;
-        VDP_clearPlane(BG_A, TRUE);
-        VDP_clearPlane(BG_B, TRUE);
-
-        drawImage(&scene2_sky, PAL1);
-        drawImage(&scene2_city, PAL2);
-        drawImage(&scene2_street, PAL3);
-    }
-
-    // Quitter l'intro apres 90s ou si START
-    if (frames > (90*60) || (joy & BUTTON_START))
-    {
-        state = STATE_TITLE;
-        VDP_clearPlane(BG_A, TRUE);
-        VDP_clearPlane(BG_B, TRUE);
-
-        VDP_drawText("REIMS EN RAGE", 10, 10);
-        VDP_drawText("PRESS START", 12, 20);
-    }
+    g_state = ST_TITLE;
+    showTitle();
 }
 
-static void joyHandler(u16 joyID, u16 changed, u16 state_)
+// ------------ Input ------------
+static void joyHandler(u16 joyId, u16 changed, u16 state)
 {
-    if (joyID == JOY_1) joy = state_;
+    if (joyId == JOY_1) g_joy = state;
 }
 
-int main(void)
+// ------------ main ------------
+int main(bool hard)
 {
     JOY_init();
     JOY_setEventHandler(joyHandler);
@@ -113,17 +135,19 @@ int main(void)
     VDP_setScreenHeight224();
     PAL_setColors(0, (u16*)palette_black, 64, DMA);
 
-    showIntro();
+    playIntro();
 
+    // Boucle titre
+    u16 blink = 0;
     while (1)
     {
-        switch (state)
+        if (g_state == ST_TITLE)
         {
-            case STATE_INTRO: updateIntro(); break;
-            case STATE_TITLE: break;
+            blink++;
+            if ((blink & 31) == 0)
+                VDP_drawText(((blink & 32) ? "            " : "PRESS START"), 12, 20);
         }
         SYS_doVBlankProcess();
     }
-
     return 0;
 }
