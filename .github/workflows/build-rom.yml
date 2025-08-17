@@ -3,11 +3,11 @@ name: Build & Release SGDK ROM
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ]               # déclenche aussi sur les tags (v0.1.0, v1.0…)
+    tags: [ "v*" ]        # déclenche aussi sur les tags (v0.1.0, v1.0…)
   workflow_dispatch:
 
 permissions:
-  contents: write                # nécessaire pour créer une Release
+  contents: write         # nécessaire pour créer une Release
 
 jobs:
   build:
@@ -16,24 +16,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Donne les droits d'écriture au conteneur Docker (UID 1000 dans l'image SGDK)
+      # Droits d’écriture pour le conteneur (UID 1000 dans l'image SGDK)
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
+      # Convertit Md-rer/res/Intro.mp3 -> intro.wav (22.05 kHz mono)
+      - name: Convert Intro.mp3 -> intro.wav (ffmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          if [ -f "Md-rer/res/Intro.mp3" ]; then
+            ffmpeg -y -i "Md-rer/res/Intro.mp3" -ar 22050 -ac 1 "Md-rer/res/intro.wav"
+          else
+            echo "Intro.mp3 manquant dans Md-rer/res/"; exit 1
+          fi
+
+      # Convertit intro.wav -> intro.xgm via l’outil SGDK (dans le container)
+      - name: Convert intro.wav -> intro.xgm (xgmtool)
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/m68k \
+            -w /m68k \
+            -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
+            java -jar /sgdk/tools/xgmtool.jar Md-rer/res/intro.wav Md-rer/res/intro.xgm
+
+      # Build du projet dans le sous-dossier Md-rer/
       - name: Build with SGDK (Docker)
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE":/m68k \
+            -w /m68k/Md-rer \
             -t registry.gitlab.com/doragasu/docker-sgdk:v2.11
 
-      # Redonne les droits au runner (pour renommer / uploader la ROM)
+      # Rends les fichiers au runner (pour renommer/uploader)
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
       - name: Prepare ROM filename
         id: name
         run: |
-          ROM="out/rom.bin"
+          ROM="Md-rer/out/rom.bin"
           if [ ! -f "$ROM" ]; then
             echo "ROM not found"; exit 1
           fi
