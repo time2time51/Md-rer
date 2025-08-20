@@ -1,152 +1,196 @@
 #include <genesis.h>
+#include <resources.h>
 #include <string.h>
-#include "resources.h"
+#include <stdbool.h>
 
-// ----- Texte d'intro -----
-static const char *intro_lines[] = {
-    "Reims, la nuit. La ville se meurt.",
-    "La corruption et la drogue rongent les rues.",
-    "Cela fait 10 ans que Jimmy et Houcine",
-    "sont tombes et ont disparu derriere les barreaux.",
-    "Depuis, les gangs regnent en maitre.",
-    "La police est corrompue, les politiciens achetes.",
-    "Les dealers font la loi dans les quartiers.",
-    "Les habitants n'ont plus d'espoir.",
-    "Mais ce soir...",
-    "Jimmy et Houcine sortent de prison.",
-    "Leur colere est intacte.",
-    "Ils vont faire payer ceux qui ont detruit leur ville.",
-    "",
-    "REIMS EN RAGE",
-    ""
-};
-#define INTRO_LINES (sizeof(intro_lines)/sizeof(intro_lines[0]))
+// --- Gestion VRAM -----------------------------------------------------------
+static u16 nextTile;
 
-// ----- Utilitaires images / palettes -----
-static u16 nextTile = TILE_USER_INDEX;
-
-// dessine une image plein ecran sur un plan, charge sa palette a l'index voulu
-static void drawFullImageOn(VDPPlane plan, const Image *img, u16 palIndex)
+// réinitialise l’écran et la VRAM “utilisateur”
+static void resetScene(void)
 {
+    VDP_resetScreen();
+    VDP_setPlaneSize(64, 32, TRUE);                 // tables larges
+    VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
+    VDP_setTextPlan(BG_A);
+    VDP_setTextPriority(1);                         // texte au-dessus
+    VDP_clearPlane(BG_A, TRUE);
+    VDP_clearPlane(BG_B, TRUE);
+    nextTile = TILE_USER_INDEX;                     // point de départ SGDK
+}
+
+// dessine une image plein écran sur un plan, réutilise PAL{palIndex}
+static void drawFullImageOn(VDPPlane plan, const Image* img, u16 palIndex)
+{
+    // palette de l’image
     PAL_setPalette(palIndex, img->palette->data, DMA);
+
+    // upload & placement du tileset à l’indice courant
     VDP_drawImageEx(
         plan,
         img,
         TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, nextTile),
         0, 0,
-        FALSE,
-        TRUE
+        DMA
     );
+
+    // avance l’indice pour un éventuel ajout
     nextTile += img->tileset->numTile;
 }
 
-// efface un plan (texte)
-static void clearPlane(VDPPlane plan)
+// --- Texte : word-wrap + centrage ------------------------------------------
+static void drawWrappedCentered(const char* text, u16 xMargin, u16 y, u16 widthCols, u16 pal)
 {
-    VDP_clearPlane(plan, TRUE);
-}
+    VDP_setTextPalette(pal);
 
-// ----- Intro -----
-static void playIntro(void)
-{
-    VDP_setPlaneSize(64, 32, TRUE);
-    VDP_setBackgroundColor(0);
+    const u16 cols = widthCols;
+    const u16 left = xMargin;
+    const u16 right = left + cols;
 
-    // Musique (depuis res: XGM intro_music "intro.vgm")
-    XGM_startPlay(&intro_music);   // pas la variante *Resource*
+    char line[64];
+    u16 cx = left;
+    u16 cy = y;
 
-    // plans / palettes
-    const u16 palImg = PAL0;
-    const u16 palTxt = PAL1;
-
-    // palette texte : uniquement la couleur 15 utilisée par la font
-    u16 palTextData[16];
-    for (u16 i = 0; i < 16; i++) palTextData[i] = 0;
-    palTextData[15] = RGB24_TO_VDPCOLOR(0xD05030);   // orange sombre
-    PAL_setPalette(palTxt, palTextData, DMA);
-    VDP_setTextPalette(palTxt);
-
-    // image de fond initiale
-    clearPlane(BG_A);
-    drawFullImageOn(BG_A, &intro1, palImg);
-
-    // texte sur le plan B (scroll vertical doux sur 90 s)
-    clearPlane(BG_B);
-    const int lineH   = 14;
-    const int firstY  = 27;
-    const int totalTextPixel = (int)INTRO_LINES * lineH + 224;
-    const int durFrames = 90 * 60;     // 90 sec @60 Hz
-    int frame = 0;
-
-    for (u16 i = 0; i < INTRO_LINES; i++)
-        VDP_drawTextBG(BG_B, intro_lines[i], 3, firstY/8 + (i*(lineH/8)));
-
-    const int swap1 = durFrames/3;       // 30 s
-    const int swap2 = (2*durFrames)/3;   // 60 s
-
-    while (frame < durFrames)
+    const char* p = text;
+    while (*p)
     {
-        int scrollY = (frame * totalTextPixel) / durFrames;
-        VDP_setVerticalScroll(BG_B, -scrollY);
+        // saute espaces de tête
+        while (*p == ' ') p++;
 
-        if (frame == swap1) {
-            clearPlane(BG_A);
-            drawFullImageOn(BG_A, &intro2, palImg);
-        } else if (frame == swap2) {
-            clearPlane(BG_A);
-            drawFullImageOn(BG_A, &intro3, palImg);
+        // prend un mot
+        const char* start = p;
+        while (*p && *p != ' ' && *p != '\n') p++;
+        u16 wlen = (u16)(p - start);
+
+        // rupture de ligne dite “manuelle”
+        if (*p == '\n')
+        {
+            line[cx - left] = 0;
+            // centrage : recalcule x de départ pour la ligne courante
+            u16 used = (cx - left);
+            u16 startX = left + (cols > used ? (cols - used)/2 : 0);
+            VDP_drawTextBG(BG_A, line, startX, cy);
+            cy++;
+            cx = left;
+            SYS_doVBlankProcess();
+            p++; // saute '\n'
+            continue;
         }
 
-        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
+        // si ça ne tient pas, on pousse la ligne en cours
+        if ((cx + wlen) > right)
+        {
+            line[cx - left] = 0;
+            u16 used = (cx - left);
+            u16 startX = left + (cols > used ? (cols - used)/2 : 0);
+            VDP_drawTextBG(BG_A, line, startX, cy);
+            cy++;
+            cx = left;
 
-        SYS_doVBlankProcess();
-        frame++;
+            // petit délai pour la lecture
+            for (u16 i=0; i<12; i++) SYS_doVBlankProcess();
+        }
+
+        // copie le mot dans le tampon “line”
+        for (u16 i=0; i<wlen; i++)
+        {
+            line[cx - left + i] = start[i];
+        }
+        cx += wlen;
+
+        // espace si le prochain caractère est un espace
+        if (*p == ' ')
+        {
+            line[cx - left] = ' ';
+            cx++;
+        }
+    }
+
+    // purge le reste
+    if (cx > left)
+    {
+        line[cx - left] = 0;
+        u16 used = (cx - left);
+        u16 startX = left + (cols > used ? (cols - used)/2 : 0);
+        VDP_drawTextBG(BG_A, line, startX, cy);
     }
 }
 
-// ----- Ecran titre -----
+// --- Intro ------------------------------------------------------------------
+static const char* INTRO_TXT =
+"Reims, la nuit. La ville se meurt.\n"
+"La corruption et la drogue rongent les rues.\n"
+"Cela fait 10 ans que Jimmy et Houcine sont tombes et ont disparu derriere les barreaux.\n"
+"Depuis, les gangs regnent en maitre.\n"
+"La police est corrompue, les politiciens aussi.\n"
+"Les dealers font la loi dans les quartiers.\n"
+"Les habitants n'ont plus d'espoir.\n"
+"Mais ce soir...\n"
+"Jimmy et Houcine sortent de prison.\n"
+"Leur colere est intacte.\n"
+"Ils vont faire payer ceux qui ont detruit leurs vies.\n"
+"REIMS EN RAGE";
+
+static void playIntro(void)
+{
+    // Musique
+    XGM_setLoopNumber(-1);            // en boucle
+    XGM_startPlayResource(&intro_music);
+
+    // 1) Ecran 1 + texte
+    resetScene();
+    drawFullImageOn(BG_B, &intro1, PAL0);
+
+    // palette texte (PAL2, orange doux)
+    PAL_setPaletteColor(PAL2*16 + 1, RGB24_TO_VDPCOLOR(255,120,64));
+    PAL_setPaletteColor(PAL2*16 + 2, RGB24_TO_VDPCOLOR(32,16,8));
+    VDP_setTextPalette(PAL2);
+
+    // zone de texte : 36 colonnes, marges de 2 colonnes
+    drawWrappedCentered(INTRO_TXT, 2, 6, 36, PAL2);
+
+    // laisse 7 secondes de lecture ~ 60 FPS
+    for (u16 f=0; f<7*60; f++) SYS_doVBlankProcess();
+
+    // 2) Ecran 2 (reutilise la VRAM → pas de dépassement)
+    resetScene();
+    drawFullImageOn(BG_B, &intro2, PAL0);
+    for (u16 f=0; f<4*60; f++) SYS_doVBlankProcess();
+
+    // 3) Ecran 3
+    resetScene();
+    drawFullImageOn(BG_B, &intro3, PAL0);
+    for (u16 f=0; f<4*60; f++) SYS_doVBlankProcess();
+
+    // Stop musique à la fin de l’intro si tu veux
+    // XGM_stopPlay();
+}
+
+// --- Titre ------------------------------------------------------------------
 static void showTitle(void)
 {
-    nextTile = TILE_USER_INDEX;
-    VDP_setPlaneSize(64, 32, TRUE);
-    VDP_setBackgroundColor(0);
-    clearPlane(BG_A);
-    clearPlane(BG_B);
+    resetScene();
+    drawFullImageOn(BG_B, &title, PAL0);
 
-    drawFullImageOn(BG_A, &title, PAL0);
-
-    const char *press = "PRESS  START";
-    s16 blink = 0;
-
-    while (1)
+    // Attente du START (ou quelques secondes)
+    u16 wait = 10*60;
+    while (wait--)
     {
-        if ((blink >> 4) & 1)
-            VDP_drawTextBG(BG_B, press, 16 - 6, 25);
-        else
-            VDP_clearTextAreaBG(BG_B, 0, 25, 40, 1);
-
         if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
-
-        blink++;
         SYS_doVBlankProcess();
     }
-}
-
-static void joyCallback(u16 joy, u16 changed, u16 state)
-{
-    (void)joy; (void)changed; (void)state;
 }
 
 int main(bool hard)
 {
     (void)hard;
-
     JOY_init();
-    JOY_setEventHandler(joyCallback);
+    XGM_init();            // init driver XGM
 
-    playIntro();     // 90 s ou START pour skip
-    showTitle();     // musique continue
+    playIntro();
+    showTitle();
 
+    // boucle vide (placeholder jeu)
     while (1) SYS_doVBlankProcess();
     return 0;
 }
