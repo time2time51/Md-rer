@@ -9,7 +9,7 @@
 #define FPS                      60
 #define INTRO_FRAMES             (INTRO_SECONDS * FPS)
 
-// vitesse (ta valeur actuelle)
+// vitesse de défilement
 #define SCROLL_PIX_PER_STEP      1
 #define SCROLL_STEP_PERIOD       30
 
@@ -37,9 +37,8 @@ static void resetScene(void)
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
-    // texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
-    VDP_setTextPriority(0);          // on remettra à 1 pour l'écran titre
+    VDP_setTextPriority(0);
     VDP_setTextPalette(TEXT_PAL);
 
     VDP_clearPlane(BG_A, TRUE);
@@ -62,7 +61,6 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
     nextTile += img->tileset->numTile;
 }
 
-// Tronque/centre ≤ 40 colonnes
 static void drawCenteredLine(u16 y, const char* s)
 {
     char buf[MAX_COLS + 1];
@@ -76,7 +74,6 @@ static void drawCenteredLine(u16 y, const char* s)
     VDP_drawText(buf, (u16)x, y);
 }
 
-// Wrap simple sur MAX_COLS, écrit ligne par ligne
 static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 {
     char out[MAX_COLS + 1];
@@ -173,51 +170,35 @@ static void playIntro(void)
 {
     resetScene();
 
-    // musique
     XGM_startPlay(intro_music);
 
-    // couleurs du texte (fond + lettres)
     PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
     PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
 
-    // première image
     drawFullImageOn(BG_B, &intro1, PAL0);
 
-    // on dessine le bloc de texte tel que la 1re ligne soit en bas
-    const u16 TEXT_Y_START = TEXT_FIRST_VISIBLE_ROW; // 27
+    const u16 TEXT_Y_START = TEXT_FIRST_VISIBLE_ROW;
     drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
 
-    // *** direction corrigée : on FAIT MONTER le texte ***
-    s16 vscroll = 0;                        // visible dès la frame 0 en bas
+    s16 vscroll = 0;
     VDP_setVerticalScroll(BG_A, vscroll);
 
     u16 frame = 0;
     while (frame < INTRO_FRAMES)
     {
+        // ⚠️ Ne redessine plus le texte → juste change l’image
         if (frame == (INTRO_FRAMES / 3))
         {
-            resetScene();
             drawFullImageOn(BG_B, &intro2, PAL0);
-            // re-couleurs + re-texte + re-scroll identiques
-            PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
-            PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
-            drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
-            VDP_setVerticalScroll(BG_A, vscroll);
         }
         else if (frame == (2 * INTRO_FRAMES / 3))
         {
-            resetScene();
             drawFullImageOn(BG_B, &intro3, PAL0);
-            PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
-            PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
-            drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
-            VDP_setVerticalScroll(BG_A, vscroll);
         }
 
-        // fait MONTER (contenu qui va vers le haut)
         if ((frame % SCROLL_STEP_PERIOD) == 0)
         {
-            vscroll += SCROLL_PIX_PER_STEP;      // <- signe inversé
+            vscroll += SCROLL_PIX_PER_STEP;
             VDP_setVerticalScroll(BG_A, vscroll);
         }
 
@@ -236,8 +217,7 @@ static void showTitle(void)
     resetScene();
     drawFullImageOn(BG_B, &title, PAL0);
 
-    // *** rendre le texte visible au-dessus de l'image ***
-    VDP_setTextPriority(1); // texte par-dessus BG_B
+    VDP_setTextPriority(1);
     PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
     PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
     VDP_setVerticalScroll(BG_A, 0);
@@ -250,13 +230,13 @@ static void showTitle(void)
         u16 j = JOY_readJoypad(JOY_1);
         if (j & BUTTON_START) break;
 
-        bool on = ((blink / 30) % 2) == 0; // ~0,5 s
+        bool on = ((blink / 30) % 2) == 0;
         if (on)
         {
             u16 len = strlen(pressStart);
             if (len > MAX_COLS) len = MAX_COLS;
             s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW); // tout en bas
+            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW);
         }
         else
         {
