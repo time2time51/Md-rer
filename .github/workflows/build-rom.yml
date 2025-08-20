@@ -34,8 +34,8 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # Prépare les PNG (320x224 truecolor) + impose une tuile 8x8 noire en (0,0)
-      - name: Prepare PNGs for SGDK (320x224 RGB + 8x8 black at 0,0)
+      # Convertit tous les PNG en 320x224, palette indexée (<=16 couleurs), sans alpha
+      - name: Prepare PNGs for SGDK (indexed palette)
         shell: bash
         run: |
           sudo apt-get update
@@ -44,16 +44,14 @@ jobs:
           shopt -s nullglob
           for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
             [ -f "$img" ] || continue
-            echo "Processing $img"
+            echo "Indexing $img"
+            # 320x224, pas d'alpha, 16 couleurs, palette indexée (png color-type=3)
             convert "$img" \
               -resize 320x224\! \
-              -background black -alpha remove -alpha off \
-              -depth 8 -type truecolor -define png:color-type=2 \
+              -alpha off -background black -flatten \
+              -dither FloydSteinberg -colors 16 \
+              -type palette -define png:color-type=3 -define png:bit-depth=8 \
               "$img"
-            # Patch 8x8 noir en haut-gauche (écrasement brut)
-            convert "$img" \( -size 8x8 xc:black \) -geometry +0+0 -compose Copy -composite "$img"
-            DIFF=$(compare -metric AE <(convert "$img" -crop 8x8+0+0 +repage PNG:-) <(convert -size 8x8 xc:black PNG:-) null: 2>&1 || true)
-            echo "Top-left 8x8 pixel-diff for $(basename "$img") = ${DIFF:-NA}"
           done
 
       # Droits d’écriture pour l’UID 1000 du conteneur SGDK
