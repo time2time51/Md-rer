@@ -5,7 +5,7 @@
 // -----------------------------------------------------------------------------
 // Réglages
 // -----------------------------------------------------------------------------
-#define INTRO_SECONDS            90
+#define INTRO_SECONDS            180
 #define FPS                      60
 #define INTRO_FRAMES             (INTRO_SECONDS * FPS)
 
