@@ -35,7 +35,7 @@ jobs:
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
       # Prépare les PNG (320x224 truecolor) + force tuile 8x8 noire en (0,0)
-      - name: Prepare PNGs for SGDK (320x224 RGB + black tile at 0,0)
+      - name: Prepare PNGs for SGDK (indexed)
         shell: bash
         run: |
           sudo apt-get update
@@ -44,14 +44,15 @@ jobs:
           shopt -s nullglob
           for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
             [ -f "$img" ] || continue
-            echo "Processing $img"
+            echo "Quantizing $img"
+            # 1) redimensionne 320x224, enlève alpha
+            # 2) quantifie à 64 couleurs max (4 palettes MD), sans dithering
+            # 3) force un PNG indexé (color-type=3)
             convert "$img" \
               -resize 320x224\! \
-              -background black -alpha remove -alpha off \
-              -depth 8 -type truecolor -define png:color-type=2 \
-              "$img"
-            # patch 8x8 noir en haut-gauche
-            convert "$img" \( -size 8x8 xc:black \) -geometry +0+0 -compose Copy -composite "$img"
+              -alpha off -background black -alpha remove \
+              -colors 64 -dither None -type palette \
+              PNG8:"$img"
           done
 
       # Décompresse Intro.vgz -> intro.vgm (le .vgz reste dans le repo)
