@@ -1,26 +1,41 @@
-name: Build ROM
+name: Build & Release SGDK ROM
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
+    tags: [ "v*" ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set paths
+      # Détecte où est le projet et res/
+      - name: Locate project/res folders
         id: paths
+        shell: bash
         run: |
-          echo "project_dir=." >> $GITHUB_OUTPUT
-          echo "res_dir=./res" >> $GITHUB_OUTPUT
-          echo "out_dir=./out" >> $GITHUB_OUTPUT
+          if [ -d "Md-rer/res" ]; then
+            echo "project_dir=Md-rer" >> $GITHUB_OUTPUT
+            echo "res_dir=Md-rer/res" >> $GITHUB_OUTPUT
+            echo "out_dir=Md-rer/out" >> $GITHUB_OUTPUT
+          else
+            echo "project_dir=." >> $GITHUB_OUTPUT
+            echo "res_dir=res" >> $GITHUB_OUTPUT
+            echo "out_dir=out" >> $GITHUB_OUTPUT
+          fi
+          echo "Project dir = ${{ steps.paths.outputs.project_dir }}"
+          echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
+          ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      - name: Prepare PNGs for SGDK (320x224 RGB + patch 8x8 noir en 0,0)
+      # Prépare les PNG (320x224 truecolor) + impose une tuile 8x8 noire en (0,0)
+      - name: Prepare PNGs for SGDK (320x224 RGB + 8x8 black at 0,0)
         shell: bash
         run: |
           sudo apt-get update
@@ -28,48 +43,89 @@ jobs:
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
           shopt -s nullglob
           for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
+            [ -f "$img" ] || continue
             echo "Processing $img"
-            # 1) Forcer 320x224, enlever alpha, truecolor (RGB)
             convert "$img" \
               -resize 320x224\! \
               -background black -alpha remove -alpha off \
               -depth 8 -type truecolor -define png:color-type=2 \
               "$img"
-
-            # 2) Coller un patch 8x8 noir en (0,0), écrasement brut
-            convert "$img" \( -size 8x8 xc:black \) \
-              -geometry +0+0 -compose Copy -composite "$img"
-
-            # 3) Vérif : diff exact sur le carré 8x8
+            # Patch 8x8 noir en haut-gauche (écrasement brut)
+            convert "$img" \( -size 8x8 xc:black \) -geometry +0+0 -compose Copy -composite "$img"
             DIFF=$(compare -metric AE <(convert "$img" -crop 8x8+0+0 +repage PNG:-) <(convert -size 8x8 xc:black PNG:-) null: 2>&1 || true)
-            echo "Top-left 8x8 pixel-diff = ${DIFF:-NA}"
+            echo "Top-left 8x8 pixel-diff for $(basename "$img") = ${DIFF:-NA}"
           done
 
-      - name: Build with SGDK
+      # Droits d’écriture pour l’UID 1000 du conteneur SGDK
+      - name: Make workspace writable for container
+        run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
+
+      # Build dans Docker (entrypoint shell + fallback make)
+      - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
           image: registry.gitlab.com/doragasu/docker-sgdk:v2.11
-          options: -v ${{ github.workspace }}:/m68k -w /m68k
-          run: |
-            set -e
-            PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
-            OUT_DIR="${{ steps.paths.outputs.out_dir }}"
+          options: >
+            --entrypoint /bin/sh
+            -e MAKEFLAGS=
+            -e GNUMAKEFLAGS=
+            -v ${{ github.workspace }}:/m68k
+            -w /m68k/${{ steps.paths.outputs.project_dir }}
+          run: >
+            -lc "set -e;
+            mkdir -p src/boot out;
+            cp /sgdk/src/boot/sega.s src/boot/sega.s;
+            cp /sgdk/src/boot/rom_head.c src/boot/rom_head.c;
+            make -j1 || make;
+            echo '=== out/ listing ===';
+            ls -lh ./out || true"
 
-            mkdir -p src/boot/ out/
-            cp /sgdk/src/boot/sega.s src/boot/sega.s
-            cp /sgdk/src/boot/rom_head.c src/boot/rom_head.c
+      # Rendre les fichiers au runner
+      - name: Fix back permissions for runner
+        run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
-            # Compilation ROM
-            make -f /sgdk/makefile.gen -j1
+      # Prépare le nom de sortie (prend le 1er .bin trouvé)
+      - name: Prepare ROM filename
+        id: name
+        shell: bash
+        run: |
+          OUT_DIR="${{ steps.paths.outputs.out_dir }}"
+          ROM=$(find "$OUT_DIR" -maxdepth 1 -type f -name '*.bin' | head -n1 || true)
+          if [ -z "$ROM" ]; then
+            echo "ERREUR: Aucun .bin trouvé dans $OUT_DIR"
+            ls -la "$OUT_DIR" || true
+            exit 1
+          fi
+          echo "ROM détectée: $ROM"
+          REPO="${GITHUB_REPOSITORY##*/}"
+          VER="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            OUT="${REPO}-${VER}.bin"
+          else
+            OUT="${REPO}.bin"
+          fi
+          cp "$ROM" "$OUT"
+          echo "outname=$OUT" >> "$GITHUB_OUTPUT"
+          ls -la "$OUT"
 
-            echo "=== Listing out/ ==="
-            ls -lh "$OUT_DIR" || true
-
+      # Upload artifact (v4 requis)
       - name: Upload ROM artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: megadrive-rom
-          path: |
-            out/*.bin
-            out/*.md
-            out/*.gen
+          name: rom
+          path: ${{ steps.name.outputs.outname }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rom
+          path: .
+      - name: Create GitHub Release and attach ROM
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./*.bin
+          generate_release_notes: true
