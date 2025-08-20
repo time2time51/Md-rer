@@ -4,17 +4,16 @@
 // -----------------------------------------------------------------------------
 // Réglages
 // -----------------------------------------------------------------------------
-// 3 minutes = 180 s -> ~60 s par image (changement à 1/3 et 2/3 du temps)
-#define INTRO_SECONDS            180
+#define INTRO_SECONDS            180      // 3 minutes
 #define FPS                      60
 #define INTRO_FRAMES             (INTRO_SECONDS * FPS)
 
-// Scroll : 1 px / 10 frames  => ~6 px/s (3x plus rapide qu’avant)
+// Vitesse de scroll : 3x plus rapide que l’ancienne (30 -> 10)
 #define SCROLL_PIX_PER_STEP      1
-#define SCROLL_STEP_PERIOD       10       
+#define SCROLL_STEP_PERIOD       10       // 1 px / 10 frames ≃ 6 px/s
 
 #define TEXT_PAL                 PAL2     // palette pour le texte
-#define TEXT_COLOR               0xFF0000 // rouge vif
+#define TEXT_COLOR               0xFF2020 // rouge lisible
 #define TEXT_BG                  0x000000 // fond noir
 #define MAX_COLS                 40       // largeur plane en caractères
 
@@ -55,7 +54,7 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
 // Tronque et centre une ligne (≤ 40 colonnes), sans dépassement
 static void drawCenteredLine(u16 y, const char* s)
 {
-    char buf[ MAX_COLS + 1 ];
+    char buf[MAX_COLS + 1];
     u16 len = strlen(s);
     if (len > MAX_COLS) len = MAX_COLS;
     memcpy(buf, s, len);
@@ -69,7 +68,7 @@ static void drawCenteredLine(u16 y, const char* s)
 // Wrap simple sur espaces à MAX_COLS colonnes, écrit directement sur le plane
 static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 {
-    char out[ MAX_COLS + 1 ];
+    char out[MAX_COLS + 1];
     u16 y = yStart;
 
     for (u16 i = 0; i < count; i++)
@@ -104,44 +103,41 @@ static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 }
 
 // -----------------------------------------------------------------------------
-// Contenu de l'intro (version longue condensée pour l’écran 40 colonnes)
+// Contenu de l'intro (script long)
 // -----------------------------------------------------------------------------
 static const char* intro_lines[] =
 {
-    "Reims, la nuit. La ville se meurt.",
+    "REIMS, LA NUIT. LA VILLE SE MEURT.",
     "La corruption et la drogue rongent les rues.",
-    "Dix annees de taule pour Jimmy et Houcine.",
-    "Deux meurtres, une seule loyaut e: la survie.",
+    "Les neon falots miroitent sur les flaques huileuses.",
+    "Les flics se planquent, les dealers paradent.",
     "",
-    "Jimmy, 35 ans, 1m78 pour 70kg.",
-    "Sec, taille en acier. Boxe anglaise.",
-    "Poings propres, regard froid.",
+    "DIX ANS PLUS TOT, TOUT A BASCULE.",
+    "Jimmy, 35 ans, 1m78 pour 70kg, boxeur anglais sec et taille dans le vif.",
+    "Houcine, 40 ans, 1m85 pour 62kg, ecole Bruce Lee: vitesse, precision.",
+    "Deux freres d'arme en colere froide.",
     "",
-    "Houcine, 40 ans, 1m85 pour 62kg.",
-    "Sec comme une lame. Arts martiaux.",
-    "Vitesse, precision, impact.",
+    "Un soir, un clan a frappe la famille.",
+    "La reponse fut immediate, fatale.",
+    "Le sang a parle. La justice a cingle.",
+    "Dix ans. Barreaux. Silence.",
     "",
-    "Dehors, Reims est tombe. La nuit est roi.",
-    "Place Drouet d'Erlon: alcool, deals, bagarres.",
-    "Flics achetes, elus muets. La rue commande.",
+    "DEHORS, REIMS A POURRI.",
+    "Place Drouet d'Erlon n'est plus qu'un couloir d'alcool et de poudre.",
+    "Les politiciens se vendent, la police baisse les yeux.",
+    "Les habitants ferment portes et coeurs.",
     "",
-    "Les dealers font la loi. Les faibles tombent.",
-    "Les habitants baissent les yeux. Plus d'espoir.",
+    "CETTE NUIT, LES PORTES CLAQUENT.",
+    "Jimmy et Houcine sortent. Pas de mots de trop.",
+    "Leurs poings sont leur promesse.",
+    "Leurs pas, un verdict.",
     "",
-    "Mais ce soir, les portes s'ouvrent.",
-    "Jimmy et Houcine sortent. Colere intacte.",
-    "Dix ans a ruminer des noms.",
-    "Dix ans a imaginer la note a payer.",
+    "Ils n'ont pas cherche la guerre.",
+    "Mais la guerre les attendait.",
     "",
-    "Ils ne parlent pas de justice.",
-    "Ils parlent de solde, de sang, de dettes.",
-    "Rue par rue. Visage par visage.",
-    "",
-    "Premiere cible: D'Erlon.",
-    "La ville va entendre leurs pas.",
-    "",
-    "REIMS EN RAGE"
+    "REIMS EN RAGE COMMENCE ICI."
 };
+static const u16 intro_count = sizeof(intro_lines) / sizeof(intro_lines[0]);
 
 // -----------------------------------------------------------------------------
 // Intro
@@ -150,45 +146,47 @@ static void playIntro(void)
 {
     resetScene();
 
-    // Musique (XGM)
+    // Musique (XGM) à partir de la ressource
     XGM_startPlay(intro_music);
 
-    // Couleurs pour le texte (fond + rouge vif)
+    // Couleurs du texte (rouge sur fond noir)
     PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
     PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
 
     // Image 1
     drawFullImageOn(BG_B, &intro1, PAL0);
 
-    // On écrit le bloc dès le début (il sera scrolle)
+    // Ecrit tout le bloc en haut du plane (y=4), mais on va scroller depuis le bas
     const u16 yTopMargin = 4;
-    drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
+    drawWrappedBlock(yTopMargin, intro_lines, intro_count);
 
-    // Scroll: part legerement hors ecran pour que le texte arrive du bas
-    s16 vscroll = -32;
+    // Scroll: commence HORS ECRAN **en bas**, puis MONTE vers le haut
+    s16 vscroll = 224;  // hauteur ecran MD
     u16 frame = 0;
 
     while (frame < INTRO_FRAMES)
     {
-        // Changement d'image aux tiers (~60 s chacune)
+        // Changement d'image toutes les 60s (1/3 de 180s)
         if (frame == (INTRO_FRAMES / 3))
         {
             resetScene();
             drawFullImageOn(BG_B, &intro2, PAL0);
-            drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
+            drawWrappedBlock(yTopMargin, intro_lines, intro_count);
+            // Repart du bas pour garder la meme lecture
+            vscroll = 224;
         }
         else if (frame == (2 * INTRO_FRAMES / 3))
         {
             resetScene();
             drawFullImageOn(BG_B, &intro3, PAL0);
-            drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
+            drawWrappedBlock(yTopMargin, intro_lines, intro_count);
+            vscroll = 224;
         }
 
-        // Avance le scroll
-        if ((frame % SCROLL_STEP_PERIOD) == 0) vscroll += SCROLL_PIX_PER_STEP;
+        // Fait MONTER (de bas -> haut)
+        if ((frame % SCROLL_STEP_PERIOD) == 0) vscroll -= SCROLL_PIX_PER_STEP;
         VDP_setVerticalScroll(BG_A, vscroll);
 
-        // Skip éventuel
         if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
 
         SYS_doVBlankProcess();
@@ -219,7 +217,7 @@ static void showTitle(void)
             u16 len = strlen(pressStart);
             if (len > MAX_COLS) len = MAX_COLS;
             s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-            VDP_drawText(pressStart, (u16)x, 26);     // bas de l'écran
+            VDP_drawText(pressStart, (u16)x, 26);   // plus bas (ligne 26)
         }
         else
         {
