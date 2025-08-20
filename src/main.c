@@ -8,10 +8,9 @@
 #define FPS                      60
 #define INTRO_FRAMES             (INTRO_SECONDS * FPS)
 
-// Scroll doux : 1 px / 3 frames ≃ 20 px/s -> 224px ~ 11.2 s par écran
-// On fera défiler bien plus que 224px puisque le texte est long.
+// Scroll doux : 1 px / 30 frames ≃ 2 px/s -> beaucoup plus lent (x10)
 #define SCROLL_PIX_PER_STEP      1
-#define SCROLL_STEP_PERIOD       3        // 1 px toutes les 3 frames
+#define SCROLL_STEP_PERIOD       30       
 
 #define TEXT_PAL                 PAL2     // palette pour le texte
 #define TEXT_COLOR               0xFF7840 // orange lisible
@@ -67,28 +66,24 @@ static void drawCenteredLine(u16 y, const char* s)
 }
 
 // Wrap simple sur espaces à MAX_COLS colonnes, écrit directement sur le plane
-// Retourne le nombre total de lignes écrites.
 static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 {
     char out[ MAX_COLS + 1 ];
-
     u16 y = yStart;
+
     for (u16 i = 0; i < count; i++)
     {
         const char* p = lines[i];
         while (*p)
         {
-            // cherche un coupure ≤ MAX_COLS
             u16 take = 0, lastSpace = 0;
             while (p[take] && take < MAX_COLS)
             {
                 if (p[take] == ' ') lastSpace = take;
                 take++;
             }
+            if (p[take] && lastSpace) take = lastSpace;
 
-            if (p[take] && lastSpace) take = lastSpace; // coupe au dernier espace si possible
-
-            // copie le tronçon (skip espace de tête/taille)
             while (*p == ' ') p++;
             u16 real = take;
             while (real && p[real - 1] == ' ') real--;
@@ -99,17 +94,16 @@ static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
             drawCenteredLine(y++, out);
 
             p += take;
-            while (*p == ' ') p++; // évite espaces doublons
+            while (*p == ' ') p++;
         }
 
-        // ligne vide entre phrases si la source contenait "" :
         if (lines[i][0] == 0) y++;
     }
     return y - yStart;
 }
 
 // -----------------------------------------------------------------------------
-// Contenu de l'intro (ton texte, identique, en ASCII sans accents)
+// Contenu de l'intro
 // -----------------------------------------------------------------------------
 static const char* intro_lines[] =
 {
@@ -131,41 +125,31 @@ static const char* intro_lines[] =
 };
 
 // -----------------------------------------------------------------------------
-// Intro avec scroll vertical fluide + 3 images
+// Intro
 // -----------------------------------------------------------------------------
 static void playIntro(void)
 {
     resetScene();
 
-    // Musique : démarre et laisse tourner
     XGM_startPlay(intro_music);
 
-    // Couleurs du texte (palette TEXT_PAL)
     PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
     PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
 
-    // Image 1 au début
     drawFullImageOn(BG_B, &intro1, PAL0);
 
-    // On remplit tout le texte wrappe sur BG_A, à partir d’une marge haute
-    const u16 yTopMargin = 4;      // espace au-dessus
-    u16 total = drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
-    u16 yBottom = yTopMargin + total + 4; // petite marge après
+    const u16 yTopMargin = 4;
+    drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
 
-    // Position de scroll (en pixels). On part avec le texte un peu plus bas que l’ecran
-    // pour voir apparaître en douceur.
-    s16 vscroll = -32;         // texte commence sous le bord haut
+    s16 vscroll = -32;
     u16 frame = 0;
 
-    // Durée totale cible
     while (frame < INTRO_FRAMES)
     {
-        // Swap d'image aux tiers du temps
         if (frame == (INTRO_FRAMES / 3))
         {
             resetScene();
             drawFullImageOn(BG_B, &intro2, PAL0);
-            // re-draw texte (resetScene a nettoye BG_A)
             drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
         }
         else if (frame == (2 * INTRO_FRAMES / 3))
@@ -175,12 +159,9 @@ static void playIntro(void)
             drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
         }
 
-        // Scroll doux (1 px toutes les 3 frames)
         if ((frame % SCROLL_STEP_PERIOD) == 0) vscroll += SCROLL_PIX_PER_STEP;
-
         VDP_setVerticalScroll(BG_A, vscroll);
 
-        // Skip sur START
         if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
 
         SYS_doVBlankProcess();
@@ -189,7 +170,7 @@ static void playIntro(void)
 }
 
 // -----------------------------------------------------------------------------
-// Titre (image + PRESS START clignotant)
+// Titre
 // -----------------------------------------------------------------------------
 static void showTitle(void)
 {
@@ -204,29 +185,26 @@ static void showTitle(void)
         u16 j = JOY_readJoypad(JOY_1);
         if (j & BUTTON_START) break;
 
-        // clignote toutes les ~0.33s
-        bool on = ((blink / 20) % 2) == 0;
+        bool on = ((blink / 30) % 2) == 0; // clignote toutes ~0.5s
         if (on)
         {
-            // bas de l’ecran (~ligne 25) bien centre
-            char buf[40]; buf[0] = 0;
-            // on centre sans depasser
-            u16 len = strlen(pressStart); if (len > MAX_COLS) len = MAX_COLS;
+            u16 len = strlen(pressStart);
+            if (len > MAX_COLS) len = MAX_COLS;
             s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
             VDP_drawText(pressStart, (u16)x, 25);
         }
         else
         {
-            VDP_clearTextArea(0, 25, 64, 1);
+            VDP_clearTextArea(0, 25, MAX_COLS, 1);
         }
 
-        SYS_doVBlankProcess();
+        VDP_waitVSync();
         blink++;
     }
 }
 
 // -----------------------------------------------------------------------------
-// main SGDK v2.11
+// main
 // -----------------------------------------------------------------------------
 int main(bool hardReset)
 {
