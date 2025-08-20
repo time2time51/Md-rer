@@ -58,17 +58,18 @@ jobs:
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
       # 4) Build the project (explicit make)
-      - name: Build with SGDK (Docker)
+            - name: Build with SGDK (Docker)
         shell: bash
         run: |
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
           docker run --rm \
+            --entrypoint /bin/sh \
             -e MAKEFLAGS= \
             -e GNUMAKEFLAGS= \
             -v "$GITHUB_WORKSPACE":/m68k \
             -w "/m68k/$PROJECT_DIR" \
-            -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-            make -j1
+            registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
+            -lc 'unset MAKEFLAGS GNUMAKEFLAGS; make -j1'
 
       # 5) Restore permissions for runner
       - name: Fix back permissions for runner
