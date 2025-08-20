@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Détecte où est le projet et res/
+      # Où est le projet + res/
       - name: Locate project/res folders
         id: paths
         shell: bash
@@ -34,8 +34,8 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # Convertit tous les PNG en 320x224, palette indexée (<=16 couleurs), sans alpha
-      - name: Prepare PNGs for SGDK (indexed palette)
+      # Prépare les PNG (320x224 truecolor) + force tuile 8x8 noire en (0,0)
+      - name: Prepare PNGs for SGDK (320x224 RGB + black tile at 0,0)
         shell: bash
         run: |
           sudo apt-get update
@@ -44,21 +44,36 @@ jobs:
           shopt -s nullglob
           for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
             [ -f "$img" ] || continue
-            echo "Indexing $img"
-            # 320x224, pas d'alpha, 16 couleurs, palette indexée (png color-type=3)
+            echo "Processing $img"
             convert "$img" \
               -resize 320x224\! \
-              -alpha off -background black -flatten \
-              -dither FloydSteinberg -colors 16 \
-              -type palette -define png:color-type=3 -define png:bit-depth=8 \
+              -background black -alpha remove -alpha off \
+              -depth 8 -type truecolor -define png:color-type=2 \
               "$img"
+            # patch 8x8 noir en haut-gauche
+            convert "$img" \( -size 8x8 xc:black \) -geometry +0+0 -compose Copy -composite "$img"
           done
+
+      # Décompresse Intro.vgz -> intro.vgm (le .vgz reste dans le repo)
+      - name: Decompress VGZ -> VGM
+        shell: bash
+        run: |
+          RES_DIR="${{ steps.paths.outputs.res_dir }}"
+          SRC=$(ls "$RES_DIR" | grep -iE '^intro\.vgz$' || true)
+          if [ -z "$SRC" ]; then
+            echo "Avertissement: Intro.vgz introuvable dans $RES_DIR (OK si tu as deja intro.vgm)"
+          else
+            echo "Intro.vgz trouvé -> conversion en intro.vgm"
+            # Décompresser sans supprimer l'original
+            gzip -dc "$RES_DIR/$SRC" > "$RES_DIR/intro.vgm"
+            ls -lh "$RES_DIR/intro.vgm"
+          fi
 
       # Droits d’écriture pour l’UID 1000 du conteneur SGDK
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # Build dans Docker (entrypoint shell + make) — SANS -c dans options
+      # Build SGDK dans Docker (entrypoint shell + make)
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -94,7 +109,7 @@ jobs:
             ls -la "$OUT_DIR" || true
             exit 1
           fi
-          echo "ROM détectée: $ROM"
+          echo "ROM detectee: $ROM"
           REPO="${GITHUB_REPOSITORY##*/}"
           VER="${GITHUB_REF_NAME}"
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
@@ -106,7 +121,7 @@ jobs:
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
           ls -la "$OUT"
 
-      # Upload artifact (v4 requis)
+      # Upload artifact (v4)
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
