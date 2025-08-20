@@ -60,7 +60,7 @@ jobs:
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # Build dans Docker (entrypoint shell + fallback make)
+      # Build dans Docker (entrypoint shell + make)
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -72,11 +72,11 @@ jobs:
             -v ${{ github.workspace }}:/m68k
             -w /m68k/${{ steps.paths.outputs.project_dir }}
           run: >
-            -lc "set -e;
+            -c "set -e;
             mkdir -p src/boot out;
             cp /sgdk/src/boot/sega.s src/boot/sega.s;
             cp /sgdk/src/boot/rom_head.c src/boot/rom_head.c;
-            make -j1 || make;
+            make -j1;
             echo '=== out/ listing ===';
             ls -lh ./out || true"
 
