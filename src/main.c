@@ -30,8 +30,6 @@ static u16 nextTile;
 // -----------------------------------------------------------------------------
 // Utilitaires
 // -----------------------------------------------------------------------------
-static void waitFrames(u16 n) { while (n--) SYS_doVBlankProcess(); }
-
 static void resetScene(void)
 {
     VDP_setPlaneSize(64, 64, TRUE);
@@ -114,11 +112,12 @@ static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 }
 
 // -----------------------------------------------------------------------------
-// Contenu
+// Script complet, découpé en 3 segments sûrs (une image = un segment)
 // -----------------------------------------------------------------------------
-static const char* intro_lines[] =
+
+// Segment 1 – La ville (intro1)
+static const char* intro_seg1[] =
 {
-    // Bloc 1 – La ville
     "Reims, la nuit. La ville suffoque.",
     "Les bars ne ferment jamais.",
     "Les terrasses de Drouet-d'Erlon brillent de neon.",
@@ -126,32 +125,37 @@ static const char* intro_lines[] =
     "La drogue coule a flot, la corruption est partout.",
     "Les flics regardent ailleurs. Les juges encaissent.",
     "Les habitants survivent dans une prison a ciel ouvert.",
-    "",
+    ""
+};
+static const u16 INTRO_SEG1_COUNT = sizeof(intro_seg1)/sizeof(intro_seg1[0]);
 
-    // Bloc 2 – Jimmy
+// Segment 2 – Jimmy + Houcine (intro2)
+static const char* intro_seg2[] =
+{
     "Jimmy, 35 ans.",
     "Un boxeur taille pour encaisser et rendre coup pour coup.",
     "Son corps sec et nerveux a ete forge dans la rage.",
     "Il a appris a frapper comme on respire.",
     "Sa colere a grandi derriere les murs de la prison.",
     "",
-
-    // Bloc 3 – Houcine
     "Houcine, 40 ans.",
     "Sec, rapide, precis comme une lame.",
     "Ses poings et ses pieds parlent le langage de Bruce Lee.",
     "Dix ans enferme n'ont pas casse son corps.",
     "Ils ont durci son esprit.",
-    "",
+    ""
+};
+static const u16 INTRO_SEG2_COUNT = sizeof(intro_seg2)/sizeof(intro_seg2[0]);
 
-    // Bloc 4 – Leur passe
+// Segment 3 – Leur passe + La vengeance (intro3)
+// >>> contient ton bloc 5 au complet <<<
+static const char* intro_seg3[] =
+{
     "Ensemble, ils ont connu la haine.",
     "Ensemble, ils ont paye le prix du sang.",
     "Un meurtre les a condamnes a dix ans de nuit.",
     "Mais derriere les barreaux, leur rage n'a jamais faibli.",
     "",
-
-    // Bloc 5 – La vengeance
     "Aujourd'hui, les portes s'ouvrent.",
     "La nuit les attend.",
     "Les gangs, les dealers, les politiciens corrompus.",
@@ -164,68 +168,59 @@ static const char* intro_lines[] =
     "",
     "REIMS EN RAGE"
 };
-static const u16 INTRO_COUNT = sizeof(intro_lines)/sizeof(intro_lines[0]);
+static const u16 INTRO_SEG3_COUNT = sizeof(intro_seg3)/sizeof(intro_seg3[0]);
 
 // -----------------------------------------------------------------------------
-// Intro
+// Lecture d'un segment (image + bloc de texte) avec scroll
+// Retourne true si START est pressé (pour skipper toute l'intro)
 // -----------------------------------------------------------------------------
-static void playIntro(void)
+static bool runIntroSegment(const Image* img, const char* const* lines, u16 count, u16 frames)
 {
     resetScene();
 
-    // musique
-    XGM_startPlay(intro_music);
-
-    // couleurs du texte (fond + lettres)
+    // couleurs du texte
     PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
     PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
 
-    // première image
-    drawFullImageOn(BG_B, &intro1, PAL0);
+    // image
+    drawFullImageOn(BG_B, img, PAL0);
 
-    // on dessine le bloc de texte tel que la 1re ligne soit en bas
-    const u16 TEXT_Y_START = TEXT_FIRST_VISIBLE_ROW; // 27
-    drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
+    // texte : première ligne en bas
+    const u16 yStart = TEXT_FIRST_VISIBLE_ROW;
+    drawWrappedBlock(yStart, lines, count);
 
-    // *** direction corrigée : on FAIT MONTER le texte ***
-    s16 vscroll = 0;                        // visible dès la frame 0 en bas
+    // scroll vers le haut
+    s16 vscroll = 0;
     VDP_setVerticalScroll(BG_A, vscroll);
 
-    u16 frame = 0;
-    while (frame < INTRO_FRAMES)
+    for (u16 f = 0; f < frames; f++)
     {
-        if (frame == (INTRO_FRAMES / 3))
+        if ((f % SCROLL_STEP_PERIOD) == 0)
         {
-            resetScene();
-            drawFullImageOn(BG_B, &intro2, PAL0);
-            // re-couleurs + re-texte + re-scroll identiques
-            PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
-            PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
-            drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
-            VDP_setVerticalScroll(BG_A, vscroll);
-        }
-        else if (frame == (2 * INTRO_FRAMES / 3))
-        {
-            resetScene();
-            drawFullImageOn(BG_B, &intro3, PAL0);
-            PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
-            PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
-            drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
+            vscroll += SCROLL_PIX_PER_STEP;
             VDP_setVerticalScroll(BG_A, vscroll);
         }
 
-        // fait MONTER (contenu qui va vers le haut)
-        if ((frame % SCROLL_STEP_PERIOD) == 0)
-        {
-            vscroll += SCROLL_PIX_PER_STEP;      // <- signe inversé
-            VDP_setVerticalScroll(BG_A, vscroll);
-        }
-
-        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
+        if (JOY_readJoypad(JOY_1) & BUTTON_START) return true;
 
         SYS_doVBlankProcess();
-        frame++;
     }
+    return false;
+}
+
+// -----------------------------------------------------------------------------
+// Intro (enchaîne les 3 segments)
+// -----------------------------------------------------------------------------
+static void playIntro(void)
+{
+    // musique une seule fois
+    XGM_startPlay(intro_music);
+
+    const u16 segFrames = INTRO_FRAMES / 3;
+
+    if (runIntroSegment(&intro1, intro_seg1, INTRO_SEG1_COUNT, segFrames)) return;
+    if (runIntroSegment(&intro2, intro_seg2, INTRO_SEG2_COUNT, segFrames)) return;
+    if (runIntroSegment(&intro3, intro_seg3, INTRO_SEG3_COUNT, segFrames)) return;
 }
 
 // -----------------------------------------------------------------------------
@@ -236,8 +231,8 @@ static void showTitle(void)
     resetScene();
     drawFullImageOn(BG_B, &title, PAL0);
 
-    // *** rendre le texte visible au-dessus de l'image ***
-    VDP_setTextPriority(1); // texte par-dessus BG_B
+    // texte par-dessus l'image
+    VDP_setTextPriority(1);
     PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
     PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
     VDP_setVerticalScroll(BG_A, 0);
