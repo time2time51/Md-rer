@@ -60,6 +60,22 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
     nextTile += img->tileset->numTile;
 }
 
+// --- helper pour dessiner une image à une position donnée, avec priorité ---
+static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex,
+                        u16 x, u16 y, bool priority)
+{
+    PAL_setPalette(palIndex, img->palette->data, DMA);
+    VDP_drawImageEx(
+        plane,
+        img,
+        TILE_ATTR_FULL(palIndex, priority, FALSE, FALSE, nextTile),
+        x, y,
+        FALSE,
+        TRUE
+    );
+    nextTile += img->tileset->numTile;
+}
+
 // Tronque/centre ≤ 40 colonnes
 static void drawCenteredLine(u16 y, const char* s)
 {
@@ -232,14 +248,44 @@ static void playIntro(void)
 }
 
 // -----------------------------------------------------------------------------
-// Titre
+// Titre multicouches (fond + persos + logo + "PRESS START")
 // -----------------------------------------------------------------------------
 static void showTitle(void)
 {
     resetScene();
-    drawFullImageOn(BG_B, &title, PAL0);
 
-    // texte par-dessus l'image
+    // Répartition des palettes :
+    // PAL0 = fond
+    // PAL1 = persos (jimmy + houcine -> doivent partager palette)
+    // PAL3 = logo
+    // PAL2 = texte
+    //
+    // IMPORTANT : PNG <= 16 couleurs. Jimmy & Houcine doivent partager la même palette.
+
+    // ---- PLACEMENT TITRE (ajustable) ----
+    // Grille 40x28 tuiles (8x8 px). Ces valeurs ont été choisies
+    // pour des portraits ~96–120 px de large avec zones vides latérales.
+    const u16 JIMMY_X   = 2;   // bien calé à gauche sans coller au bord
+    const u16 JIMMY_Y   = 8;
+    const u16 HOUCINE_X = 26;  // calé à droite, symétrique
+    const u16 HOUCINE_Y = 8;
+    const u16 LOGO_X    = 6;   // centré visuellement au-dessus
+    const u16 LOGO_Y    = 2;
+    // -------------------------------------
+
+    // 1) Fond (plein écran) sur BG_B
+    drawImageAt(BG_B, &title_bg, PAL0, 0, 0, FALSE);
+
+    // 2) Jimmy à gauche (BG_A + priorité)
+    drawImageAt(BG_A, &jimmy, PAL1, JIMMY_X, JIMMY_Y, TRUE);
+
+    // 3) Houcine à droite (BG_A + priorité)
+    drawImageAt(BG_A, &houcine, PAL1, HOUCINE_X, HOUCINE_Y, TRUE);
+
+    // 4) Logo en haut (BG_A + priorité)
+    drawImageAt(BG_A, &logo, PAL3, LOGO_X, LOGO_Y, TRUE);
+
+    // Texte par-dessus tout
     VDP_setTextPriority(1);
     applyTextColors();
     VDP_setVerticalScroll(BG_A, 0);
@@ -258,7 +304,7 @@ static void showTitle(void)
             u16 len = strlen(pressStart);
             if (len > MAX_COLS) len = MAX_COLS;
             s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW); // tout en bas
+            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW);
         }
         else
         {
