@@ -1,7 +1,42 @@
 #include <genesis.h>
-#include "resources.h"
+#include "resources.h"   // intro1, intro2, intro3, title, intro_music
 
-// --------- Texte d'intro ---------
+// ---------- Config ----------
+#define INTRO_DURATION_FRAMES   (90 * 60)     // 90 secondes @60fps
+#define INTRO_SEGMENT_FRAMES    (30 * 60)     // 30s par image
+#define TEXT_SCROLL_PERIOD      30            // rafraîchit le scroll texte toutes les 30 frames (~0.5s)
+#define PRESS_BLINK_PERIOD      20            // clignotement titre
+
+typedef enum { STATE_INTRO, STATE_TITLE } GameState;
+static GameState state = STATE_INTRO;
+
+// Input
+static u16 joy1_state = 0;
+
+static void onJoy(u16 joy, u16 changed, u16 state)
+{
+    if (joy == JOY_1) joy1_state = state;
+}
+
+// Dessin d'une image plein écran sur un BG donné
+static void drawFullImageOn(VDPPlane plane, const Image *img, u16 *ioTileIndex, u16 palIndex)
+{
+    // Palette de l'image -> palIndex (PAL0..PAL3)
+    PAL_setPalette(palIndex, img->palette, DMA);
+
+    // Dessin image (320x224) à (0,0)
+    VDP_drawImageEx(
+        plane,
+        img,
+        TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, *ioTileIndex),
+        0, 0,
+        FALSE,     // use DMA for tiles
+        TRUE       // use DMA for map
+    );
+    *ioTileIndex += img->tileset->numTile;
+}
+
+// Texte d'intro
 static const char *intro_lines[] = {
     "Reims, la nuit. La ville se meurt.",
     "La corruption et la drogue rongent les rues.",
@@ -16,102 +51,141 @@ static const char *intro_lines[] = {
     "Leur colere est intacte.",
     "Ils vont faire payer ceux qui ont detruit leur ville.",
     "",
-    "REIMS EN RAGE",
-    ""
+    "REIMS EN RAGE"
 };
-#define INTRO_LINES (sizeof(intro_lines)/sizeof(intro_lines[0]))
+#define INTRO_LINES_COUNT (sizeof(intro_lines)/sizeof(intro_lines[0]))
 
-static void drawFullImage(const Image *img)
-{
-    VDP_clearPlane(BG_B, TRUE);
-    PAL_setPalette(PAL1, img->palette->data, DMA);
-    // Toujours un tile index >= 1 (0 est reserve par le VDP)
-    VDP_drawImageEx(BG_B, img,
-        TILE_ATTR_FULL(PAL1, 0, 0, 0, 1),
-        0, 0, FALSE, TRUE);
-}
-
-static void showTitle(void)
-{
-    VDP_clearPlane(BG_A, TRUE);
-    VDP_clearPlane(BG_B, TRUE);
-    drawFullImage(&title);
-
-    while (1)
-    {
-        if (JOY_readJoypad(JOY_1) & BUTTON_START)
-        {
-            // TODO: aller vers le menu / jeu
-        }
-        SYS_doVBlankProcess();
-    }
-}
-
+// Affiche l'intro (bloquant jusqu'au passage a l'ecran titre)
 static void playIntro(void)
 {
-    VDP_resetScreen();
+    // Vidéo setup
     VDP_setScreenWidth320();
-    VDP_setPlaneSize(64, 32);   // tables larges = scroll texte safe
+    VDP_setScreenHeight224();
+
+    // Grandes tables de scroll pour être large
+    VDP_setPlaneSize(64, 32, TRUE);
+
+    // Nettoyage & fond noir
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);
+    PAL_setColors(0, (u16*)palette_black, 64, DMA); // fond noir global au démarrage
 
-    // Police / texte en BLANC sur PAL0
-    VDP_setTextPalette(PAL0);
-    PAL_setPaletteColors(0, (u16*)palette_black, 64, DMA); // tout noir de base
-    PAL_setColor(15, RGB24_TO_VDPCOLOR(0xFFFFFF));         // blanc pour la fonte SGDK
+    // Lance la musique XGM (intro_music vient des resources)
+    XGM_startPlayResource(intro_music);
 
-    drawFullImage(&intro1);
+    // On met les images sur BG_B (fond), le texte sur BG_A (par-dessus)
+    u16 tileIndexB = TILE_USER_INDEX;
+    u16 palBG = PAL1; // on garde PAL0 pour du texte blanc si besoin
 
-    // Musique XGM : boucle infinie
-    XGM_setLoopNumber(-1);
-    XGM_startPlay(intro_music);
+    // Affiche la première image
+    drawFullImageOn(BG_B, &intro1, &tileIndexB, palBG);
 
-    s16 scrollY = 0;      // scroll vertical du plan A (negatif => monte)
-    u16 nextLine = 0;
-    u16 lineTimer = 0;
-    const u16 lineEvery = 150; // ~2.5s par ligne (60 FPS)
-    s16 writeY = 28;      // on ecrit sous l'ecran
+    // Texte initial (posé en bas de l'écran)
+    s16 baseY = 24; // lignes de texte partent du bas et vont remonter
+    for (u16 i = 0; i < INTRO_LINES_COUNT; i++)
+        VDP_drawText(intro_lines[i], 2, baseY + (s16)i*2);
+
+    // Boucle d'intro
     u32 frames = 0;
-
-    while (1)
+    while (frames < INTRO_DURATION_FRAMES)
     {
-        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
-
-        // apparition des lignes
-        if ((nextLine < INTRO_LINES) && (++lineTimer >= lineEvery))
+        // Changement d'image toutes les 30s
+        if (frames == INTRO_SEGMENT_FRAMES)
         {
-            lineTimer = 0;
-            VDP_drawText(intro_lines[nextLine], 2, writeY);
-            writeY += 2;
-            nextLine++;
+            VDP_clearPlane(BG_B, TRUE);
+            tileIndexB = TILE_USER_INDEX;
+            drawFullImageOn(BG_B, &intro2, &tileIndexB, palBG);
+        }
+        else if (frames == (INTRO_SEGMENT_FRAMES*2))
+        {
+            VDP_clearPlane(BG_B, TRUE);
+            tileIndexB = TILE_USER_INDEX;
+            drawFullImageOn(BG_B, &intro3, &tileIndexB, palBG);
         }
 
-        // scroll doux (remonte le texte)
-        if ((frames & 3) == 0) scrollY--;
-        VDP_setVerticalScroll(BG_A, scrollY);
+        // Scroll du texte (toutes ~0.5s)
+        if ((frames % TEXT_SCROLL_PERIOD) == 0)
+        {
+            VDP_clearPlane(BG_A, TRUE); // on réécrit uniquement le texte
 
-        // switch d'image toutes ~30s (3 x 30s = 90s)
-        if (frames == 1800)       drawFullImage(&intro2);
-        else if (frames == 3600)  drawFullImage(&intro3);
-        else if (frames >= 5400)  break;
+            s16 shift = -(frames / TEXT_SCROLL_PERIOD); // 1 "ligne" toutes 0.5s
+            s16 y0 = baseY + shift;
+
+            for (u16 i = 0; i < INTRO_LINES_COUNT; i++)
+            {
+                s16 y = y0 + (s16)i*2;
+                if (y >= 0 && y < 28)
+                    VDP_drawText(intro_lines[i], 2, y);
+            }
+        }
+
+        // Skip si START (aucun message affiché à l'écran)
+        if (joy1_state & BUTTON_START) break;
 
         frames++;
         SYS_doVBlankProcess();
     }
 
-    showTitle(); // la musique continue
+    // Transition vers le titre : on ne touche pas à la musique (elle continue)
+    state = STATE_TITLE;
+}
+
+static void showTitle(void)
+{
+    // BG clean
+    VDP_clearPlane(BG_A, TRUE);
+    VDP_clearPlane(BG_B, TRUE);
+
+    // Grande table
+    VDP_setPlaneSize(64, 32, TRUE);
+
+    // Affiche l'image de titre sur BG_A
+    u16 tileIndexA = TILE_USER_INDEX;
+    drawFullImageOn(BG_A, &title, &tileIndexA, PAL0);
+}
+
+static void runTitle(void)
+{
+    // “PRESS START” clignotant (on le place vers le bas, centré approximativement)
+    static u16 blink = 0;
+    blink++;
+
+    if ((blink % (PRESS_BLINK_PERIOD*2)) < PRESS_BLINK_PERIOD)
+        VDP_drawText("PRESS START", 12, 21);
+    else
+        VDP_clearText(12, 21, 12);
+
+    // Quand START est presse, on pourrait enchaîner vers le menu / jeu
+    // (placeholder : rien pour l’instant)
 }
 
 int main(void)
 {
+    // Input
     JOY_init();
-    SYS_disableInts();
+    JOY_setEventHandler(onJoy);
 
-    VDP_setScreenWidth320();
-    VDP_setPlaneSize(64, 32);
+    // Ecran noir
+    PAL_setColors(0, (u16*)palette_black, 64, DMA);
 
-    SYS_enableInts();
-
+    // Lance l'intro (bloquante, gère les images + défilement)
     playIntro();
+
+    // Affiche l’ecran titre (la musique continue)
+    showTitle();
+
+    while (1)
+    {
+        switch (state)
+        {
+            case STATE_TITLE:
+                runTitle();
+                break;
+            default:
+                break;
+        }
+        SYS_doVBlankProcess();
+    }
+
     return 0;
 }
