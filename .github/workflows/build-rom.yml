@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Locate project/res (root or Md-rer/)
+      # 1) Localiser projet et dossier res/
       - name: Locate project/res folders
         id: paths
         shell: bash
@@ -28,7 +28,7 @@ jobs:
             PROJECT_DIR="."
             RES_DIR="res"
           else
-            echo "ERREUR: dossier res/ introuvable (ni ./res ni ./Md-rer/res)."; exit 1
+            echo "ERREUR: dossier res/ introuvable (ni ./res ni ./Md-rer/res)." ; exit 1
           fi
           echo "project_dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
           echo "res_dir=$RES_DIR" >> $GITHUB_OUTPUT
@@ -36,7 +36,7 @@ jobs:
           echo "Res dir     = $RES_DIR"
           ls -la "$RES_DIR" || true
 
-      # 2) Préparation des PNGs (forçage truecolor + resize 320x224)
+      # 2) Préparer les PNG: 320x224, suppression alpha, forcer Truecolor (RGB)
       - name: Prepare PNGs for SGDK (resize + force truecolor)
         shell: bash
         run: |
@@ -53,12 +53,12 @@ jobs:
               "$img"
           done
 
-      # 3) Make workspace writable for container
+      # 3) Donner les droits d'écriture au user du conteneur (UID 1000)
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # 4) Build the project (explicit make)
-            - name: Build with SGDK (Docker)
+      # 4) Build SGDK dans le conteneur (ENTRYPOINT forcé à /bin/sh)
+      - name: Build with SGDK (Docker)
         shell: bash
         run: |
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
@@ -71,11 +71,11 @@ jobs:
             registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
             -lc 'unset MAKEFLAGS GNUMAKEFLAGS; make -j1'
 
-      # 5) Restore permissions for runner
+      # 5) Rendre les fichiers au runner
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
-      # 6) Prepare ROM filename
+      # 6) Préparer le nom du fichier ROM
       - name: Prepare ROM filename
         id: name
         shell: bash
@@ -83,7 +83,7 @@ jobs:
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
           ROM="$PROJECT_DIR/out/rom.bin"
           if [ ! -f "$ROM" ]; then
-            echo "ROM not found at $ROM"; exit 1
+            echo "ROM not found at $ROM" ; ls -la "$PROJECT_DIR/out" || true ; exit 1
           fi
           REPO="${GITHUB_REPOSITORY##*/}"
           VER="${GITHUB_REF_NAME}"
@@ -95,7 +95,7 @@ jobs:
           cp "$ROM" "$OUT"
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
 
-      # 7) Upload ROM artifact
+      # 7) Upload de la ROM en artifact
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
