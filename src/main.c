@@ -9,12 +9,12 @@
 #define FPS                      60
 #define INTRO_FRAMES             (INTRO_SECONDS * FPS)
 
-// vitesse (ta valeur actuelle)
+// vitesse
 #define SCROLL_PIX_PER_STEP      1
 #define SCROLL_STEP_PERIOD       30
 
 #define TEXT_PAL                 PAL2
-#define TEXT_COLOR               0xFF7840
+#define TEXT_COLOR               0xFF0000   // 🔴 Rouge sang
 #define TEXT_BG                  0x000000
 #define MAX_COLS                 40
 
@@ -30,6 +30,8 @@ static u16 nextTile;
 // -----------------------------------------------------------------------------
 // Utilitaires
 // -----------------------------------------------------------------------------
+static void waitFrames(u16 n) { while (n--) SYS_doVBlankProcess(); }
+
 static void resetScene(void)
 {
     VDP_setPlaneSize(64, 64, TRUE);
@@ -37,7 +39,7 @@ static void resetScene(void)
 
     // texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
-    VDP_setTextPriority(0);          // on remettra à 1 pour l'écran titre
+    VDP_setTextPriority(0);          
     VDP_setTextPalette(TEXT_PAL);
 
     VDP_clearPlane(BG_A, TRUE);
@@ -112,12 +114,11 @@ static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 }
 
 // -----------------------------------------------------------------------------
-// Script complet, découpé en 3 segments sûrs (une image = un segment)
+// Contenu
 // -----------------------------------------------------------------------------
-
-// Segment 1 – La ville (intro1)
-static const char* intro_seg1[] =
+static const char* intro_lines[] =
 {
+    // Bloc 1 – La ville
     "Reims, la nuit. La ville suffoque.",
     "Les bars ne ferment jamais.",
     "Les terrasses de Drouet-d'Erlon brillent de neon.",
@@ -125,37 +126,32 @@ static const char* intro_seg1[] =
     "La drogue coule a flot, la corruption est partout.",
     "Les flics regardent ailleurs. Les juges encaissent.",
     "Les habitants survivent dans une prison a ciel ouvert.",
-    ""
-};
-static const u16 INTRO_SEG1_COUNT = sizeof(intro_seg1)/sizeof(intro_seg1[0]);
+    "",
 
-// Segment 2 – Jimmy + Houcine (intro2)
-static const char* intro_seg2[] =
-{
+    // Bloc 2 – Jimmy
     "Jimmy, 35 ans.",
     "Un boxeur taille pour encaisser et rendre coup pour coup.",
     "Son corps sec et nerveux a ete forge dans la rage.",
     "Il a appris a frapper comme on respire.",
     "Sa colere a grandi derriere les murs de la prison.",
     "",
+
+    // Bloc 3 – Houcine
     "Houcine, 40 ans.",
     "Sec, rapide, precis comme une lame.",
     "Ses poings et ses pieds parlent le langage de Bruce Lee.",
     "Dix ans enferme n'ont pas casse son corps.",
     "Ils ont durci son esprit.",
-    ""
-};
-static const u16 INTRO_SEG2_COUNT = sizeof(intro_seg2)/sizeof(intro_seg2[0]);
+    "",
 
-// Segment 3 – Leur passe + La vengeance (intro3)
-// >>> contient ton bloc 5 au complet <<<
-static const char* intro_seg3[] =
-{
+    // Bloc 4 – Leur passe
     "Ensemble, ils ont connu la haine.",
     "Ensemble, ils ont paye le prix du sang.",
     "Un meurtre les a condamnes a dix ans de nuit.",
     "Mais derriere les barreaux, leur rage n'a jamais faibli.",
     "",
+
+    // Bloc 5 – La vengeance
     "Aujourd'hui, les portes s'ouvrent.",
     "La nuit les attend.",
     "Les gangs, les dealers, les politiciens corrompus.",
@@ -168,59 +164,64 @@ static const char* intro_seg3[] =
     "",
     "REIMS EN RAGE"
 };
-static const u16 INTRO_SEG3_COUNT = sizeof(intro_seg3)/sizeof(intro_seg3[0]);
+static const u16 INTRO_COUNT = sizeof(intro_lines)/sizeof(intro_lines[0]);
 
 // -----------------------------------------------------------------------------
-// Lecture d'un segment (image + bloc de texte) avec scroll
-// Retourne true si START est pressé (pour skipper toute l'intro)
-// -----------------------------------------------------------------------------
-static bool runIntroSegment(const Image* img, const char* const* lines, u16 count, u16 frames)
-{
-    resetScene();
-
-    // couleurs du texte
-    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
-    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
-
-    // image
-    drawFullImageOn(BG_B, img, PAL0);
-
-    // texte : première ligne en bas
-    const u16 yStart = TEXT_FIRST_VISIBLE_ROW;
-    drawWrappedBlock(yStart, lines, count);
-
-    // scroll vers le haut
-    s16 vscroll = 0;
-    VDP_setVerticalScroll(BG_A, vscroll);
-
-    for (u16 f = 0; f < frames; f++)
-    {
-        if ((f % SCROLL_STEP_PERIOD) == 0)
-        {
-            vscroll += SCROLL_PIX_PER_STEP;
-            VDP_setVerticalScroll(BG_A, vscroll);
-        }
-
-        if (JOY_readJoypad(JOY_1) & BUTTON_START) return true;
-
-        SYS_doVBlankProcess();
-    }
-    return false;
-}
-
-// -----------------------------------------------------------------------------
-// Intro (enchaîne les 3 segments)
+// Intro
 // -----------------------------------------------------------------------------
 static void playIntro(void)
 {
-    // musique une seule fois
+    resetScene();
+
+    // musique
     XGM_startPlay(intro_music);
 
-    const u16 segFrames = INTRO_FRAMES / 3;
+    // couleurs du texte (fond + rouge sang)
+    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
+    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
 
-    if (runIntroSegment(&intro1, intro_seg1, INTRO_SEG1_COUNT, segFrames)) return;
-    if (runIntroSegment(&intro2, intro_seg2, INTRO_SEG2_COUNT, segFrames)) return;
-    if (runIntroSegment(&intro3, intro_seg3, INTRO_SEG3_COUNT, segFrames)) return;
+    // première image
+    drawFullImageOn(BG_B, &intro1, PAL0);
+
+    const u16 TEXT_Y_START = TEXT_FIRST_VISIBLE_ROW;
+    drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
+
+    s16 vscroll = 0;
+    VDP_setVerticalScroll(BG_A, vscroll);
+
+    u16 frame = 0;
+    while (frame < INTRO_FRAMES)
+    {
+        if (frame == (INTRO_FRAMES / 3))
+        {
+            resetScene();
+            drawFullImageOn(BG_B, &intro2, PAL0);
+            PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
+            PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
+            drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
+            VDP_setVerticalScroll(BG_A, vscroll);
+        }
+        else if (frame == (2 * INTRO_FRAMES / 3))
+        {
+            resetScene();
+            drawFullImageOn(BG_B, &intro3, PAL0);
+            PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
+            PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
+            drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
+            VDP_setVerticalScroll(BG_A, vscroll);
+        }
+
+        if ((frame % SCROLL_STEP_PERIOD) == 0)
+        {
+            vscroll += SCROLL_PIX_PER_STEP; 
+            VDP_setVerticalScroll(BG_A, vscroll);
+        }
+
+        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
+
+        SYS_doVBlankProcess();
+        frame++;
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -231,8 +232,7 @@ static void showTitle(void)
     resetScene();
     drawFullImageOn(BG_B, &title, PAL0);
 
-    // texte par-dessus l'image
-    VDP_setTextPriority(1);
+    VDP_setTextPriority(1); 
     PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
     PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
     VDP_setVerticalScroll(BG_A, 0);
@@ -245,13 +245,13 @@ static void showTitle(void)
         u16 j = JOY_readJoypad(JOY_1);
         if (j & BUTTON_START) break;
 
-        bool on = ((blink / 30) % 2) == 0; // ~0,5 s
+        bool on = ((blink / 30) % 2) == 0; 
         if (on)
         {
             u16 len = strlen(pressStart);
             if (len > MAX_COLS) len = MAX_COLS;
             s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW); // tout en bas
+            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW);
         }
         else
         {
