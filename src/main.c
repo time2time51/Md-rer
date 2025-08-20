@@ -1,4 +1,5 @@
 #include <genesis.h>
+#include <string.h>
 #include "resources.h"
 
 // -----------------------------------------------------------------------------
@@ -8,14 +9,18 @@
 #define FPS                      60
 #define INTRO_FRAMES             (INTRO_SECONDS * FPS)
 
-// Scroll : 1 px / 10 frames  => ~6 px/s (3x plus rapide qu’avant)
+// vitesse (ta valeur actuelle)
 #define SCROLL_PIX_PER_STEP      1
-#define SCROLL_STEP_PERIOD       10       
+#define SCROLL_STEP_PERIOD       30
 
-#define TEXT_PAL                 PAL2     // palette pour le texte
-#define TEXT_COLOR               0xFF0000 // rouge vif
-#define TEXT_BG                  0x000000 // fond noir
-#define MAX_COLS                 40       // largeur plane en caractères
+#define TEXT_PAL                 PAL2
+#define TEXT_COLOR               0xFF7840
+#define TEXT_BG                  0x000000
+#define MAX_COLS                 40
+
+// lignes basses
+#define TEXT_FIRST_VISIBLE_ROW   27   // première ligne visible tout en bas
+#define PRESS_START_ROW          27   // "PRESS START" tout en bas
 
 // -----------------------------------------------------------------------------
 // Etat commun
@@ -29,13 +34,12 @@ static void waitFrames(u16 n) { while (n--) SYS_doVBlankProcess(); }
 
 static void resetScene(void)
 {
-    // Large plane pour beaucoup de lignes à scroller
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
-    // Texte sur BG_A, images sur BG_B
+    // texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
-    VDP_setTextPriority(0);
+    VDP_setTextPriority(0);          // on remettra à 1 pour l'écran titre
     VDP_setTextPalette(TEXT_PAL);
 
     VDP_clearPlane(BG_A, TRUE);
@@ -47,14 +51,21 @@ static void resetScene(void)
 static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
 {
     PAL_setPalette(palIndex, img->palette->data, DMA);
-    VDP_drawImageEx(plane, img, nextTile, 0, 0, FALSE, TRUE);
+    VDP_drawImageEx(
+        plane,
+        img,
+        TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, nextTile),
+        0, 0,
+        FALSE,
+        TRUE
+    );
     nextTile += img->tileset->numTile;
 }
 
-// Tronque et centre une ligne (≤ 40 colonnes), sans dépassement
+// Tronque/centre ≤ 40 colonnes
 static void drawCenteredLine(u16 y, const char* s)
 {
-    char buf[ MAX_COLS + 1 ];
+    char buf[MAX_COLS + 1];
     u16 len = strlen(s);
     if (len > MAX_COLS) len = MAX_COLS;
     memcpy(buf, s, len);
@@ -65,10 +76,10 @@ static void drawCenteredLine(u16 y, const char* s)
     VDP_drawText(buf, (u16)x, y);
 }
 
-// Wrap simple sur espaces à MAX_COLS colonnes, écrit directement sur le plane
+// Wrap simple sur MAX_COLS, écrit ligne par ligne
 static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 {
-    char out[ MAX_COLS + 1 ];
+    char out[MAX_COLS + 1];
     u16 y = yStart;
 
     for (u16 i = 0; i < count; i++)
@@ -103,44 +114,57 @@ static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 }
 
 // -----------------------------------------------------------------------------
-// Contenu de l'intro (version longue condensée pour l’écran 40 colonnes)
+// Contenu
 // -----------------------------------------------------------------------------
 static const char* intro_lines[] =
 {
-    "Reims, la nuit. La ville se meurt.",
-    "La corruption et la drogue rongent les rues.",
-    "Dix annees de taule pour Jimmy et Houcine.",
-    "Deux meurtres, une seule loyaut e: la survie.",
+    // Bloc 1 – La ville
+    "Reims, la nuit. La ville suffoque.",
+    "Les bars ne ferment jamais.",
+    "Les terrasses de Drouet-d'Erlon brillent de neon.",
+    "Mais derriere les verres d'alcool, la peur rode.",
+    "La drogue coule a flot, la corruption est partout.",
+    "Les flics regardent ailleurs. Les juges encaissent.",
+    "Les habitants survivent dans une prison a ciel ouvert.",
     "",
-    "Jimmy, 35 ans, 1m78 pour 70kg.",
-    "Sec, taille en acier. Boxe anglaise.",
-    "Poings propres, regard froid.",
+
+    // Bloc 2 – Jimmy
+    "Jimmy, 35 ans.",
+    "Un boxeur taille pour encaisser et rendre coup pour coup.",
+    "Son corps sec et nerveux a ete forge dans la rage.",
+    "Il a appris a frapper comme on respire.",
+    "Sa colere a grandi derriere les murs de la prison.",
     "",
-    "Houcine, 40 ans, 1m85 pour 62kg.",
-    "Sec comme une lame. Arts martiaux.",
-    "Vitesse, precision, impact.",
+
+    // Bloc 3 – Houcine
+    "Houcine, 40 ans.",
+    "Sec, rapide, precis comme une lame.",
+    "Ses poings et ses pieds parlent le langage de Bruce Lee.",
+    "Dix ans enferme n'ont pas casse son corps.",
+    "Ils ont durci son esprit.",
     "",
-    "Dehors, Reims est tombe. La nuit est roi.",
-    "Place Drouet d'Erlon: alcool, deals, bagarres.",
-    "Flics achetes, elus muets. La rue commande.",
+
+    // Bloc 4 – Leur passe
+    "Ensemble, ils ont connu la haine.",
+    "Ensemble, ils ont paye le prix du sang.",
+    "Un meurtre les a condamnes a dix ans de nuit.",
+    "Mais derriere les barreaux, leur rage n'a jamais faibli.",
     "",
-    "Les dealers font la loi. Les faibles tombent.",
-    "Les habitants baissent les yeux. Plus d'espoir.",
+
+    // Bloc 5 – La vengeance
+    "Aujourd'hui, les portes s'ouvrent.",
+    "La nuit les attend.",
+    "Les gangs, les dealers, les politiciens corrompus.",
+    "Tous vont gouter a leur retour.",
     "",
-    "Mais ce soir, les portes s'ouvrent.",
-    "Jimmy et Houcine sortent. Colere intacte.",
-    "Dix ans a ruminer des noms.",
-    "Dix ans a imaginer la note a payer.",
+    "Reims est pourrie.",
+    "Mais Jimmy et Houcine sont pires.",
     "",
-    "Ils ne parlent pas de justice.",
-    "Ils parlent de solde, de sang, de dettes.",
-    "Rue par rue. Visage par visage.",
-    "",
-    "Premiere cible: D'Erlon.",
-    "La ville va entendre leurs pas.",
+    "Et la ville va saigner.",
     "",
     "REIMS EN RAGE"
 };
+static const u16 INTRO_COUNT = sizeof(intro_lines)/sizeof(intro_lines[0]);
 
 // -----------------------------------------------------------------------------
 // Intro
@@ -149,45 +173,54 @@ static void playIntro(void)
 {
     resetScene();
 
-    // Musique (XGM)
+    // musique
     XGM_startPlay(intro_music);
 
-    // Couleurs pour le texte (fond + rouge vif)
+    // couleurs du texte (fond + lettres)
     PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
     PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
 
-    // Image 1
+    // première image
     drawFullImageOn(BG_B, &intro1, PAL0);
 
-    // On écrit le bloc dès le début (il sera scrolle)
-    const u16 yTopMargin = 4;
-    drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
+    // on dessine le bloc de texte tel que la 1re ligne soit en bas
+    const u16 TEXT_Y_START = TEXT_FIRST_VISIBLE_ROW; // 27
+    drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
 
-    // Scroll: part légerement hors ecran pour que le texte arrive du bas
-    s16 vscroll = -32;
+    // *** direction corrigée : on FAIT MONTER le texte ***
+    s16 vscroll = 0;                        // visible dès la frame 0 en bas
+    VDP_setVerticalScroll(BG_A, vscroll);
+
     u16 frame = 0;
-
     while (frame < INTRO_FRAMES)
     {
-        // Changement d'image aux tiers
         if (frame == (INTRO_FRAMES / 3))
         {
             resetScene();
             drawFullImageOn(BG_B, &intro2, PAL0);
-            drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
+            // re-couleurs + re-texte + re-scroll identiques
+            PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
+            PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
+            drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
+            VDP_setVerticalScroll(BG_A, vscroll);
         }
         else if (frame == (2 * INTRO_FRAMES / 3))
         {
             resetScene();
             drawFullImageOn(BG_B, &intro3, PAL0);
-            drawWrappedBlock(yTopMargin, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
+            PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
+            PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
+            drawWrappedBlock(TEXT_Y_START, intro_lines, INTRO_COUNT);
+            VDP_setVerticalScroll(BG_A, vscroll);
         }
 
-        // Avance le scroll (3x plus rapide qu’avant)
-        if ((frame % SCROLL_STEP_PERIOD) == 0) vscroll += SCROLL_PIX_PER_STEP;
-        VDP_setVerticalScroll(BG_A, vscroll);
+        // fait MONTER (contenu qui va vers le haut)
+        if ((frame % SCROLL_STEP_PERIOD) == 0)
+        {
+            vscroll += SCROLL_PIX_PER_STEP;      // <- signe inversé
+            VDP_setVerticalScroll(BG_A, vscroll);
+        }
 
-        // Skip éventuel
         if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
 
         SYS_doVBlankProcess();
@@ -203,6 +236,12 @@ static void showTitle(void)
     resetScene();
     drawFullImageOn(BG_B, &title, PAL0);
 
+    // *** rendre le texte visible au-dessus de l'image ***
+    VDP_setTextPriority(1); // texte par-dessus BG_B
+    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
+    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
+    VDP_setVerticalScroll(BG_A, 0);
+
     const char* pressStart = "PRESS START";
     u16 blink = 0;
 
@@ -211,18 +250,17 @@ static void showTitle(void)
         u16 j = JOY_readJoypad(JOY_1);
         if (j & BUTTON_START) break;
 
-        // Clignote toutes ~0.5s
-        bool on = ((blink / 30) % 2) == 0;
+        bool on = ((blink / 30) % 2) == 0; // ~0,5 s
         if (on)
         {
             u16 len = strlen(pressStart);
             if (len > MAX_COLS) len = MAX_COLS;
             s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-            VDP_drawText(pressStart, (u16)x, 26);     // plus bas
+            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW); // tout en bas
         }
         else
         {
-            VDP_clearTextArea(0, 26, MAX_COLS, 1);
+            VDP_clearTextArea(0, PRESS_START_ROW, MAX_COLS, 1);
         }
 
         VDP_waitVSync();
