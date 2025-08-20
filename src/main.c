@@ -146,45 +146,45 @@ static void playIntro(void)
 {
     resetScene();
 
-    // Musique (XGM) à partir de la ressource
     XGM_startPlay(intro_music);
 
-    // Couleurs du texte (rouge sur fond noir)
     PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
     PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
 
-    // Image 1
+    // Place d’abord l’image
     drawFullImageOn(BG_B, &intro1, PAL0);
 
-    // Ecrit tout le bloc en haut du plane (y=4), mais on va scroller depuis le bas
-    const u16 yTopMargin = 4;
+    // On écrit le texte en haut du plan (y=2 par ex.)
+    const u16 yTopMargin = 2;
     drawWrappedBlock(yTopMargin, intro_lines, intro_count);
 
-    // Scroll: commence HORS ECRAN **en bas**, puis MONTE vers le haut
-    s16 vscroll = 224;  // hauteur ecran MD
+    // Positionne le scroll TOUT EN BAS -> texte hors champ
+    // 224px écran + petite marge
+    s16 vscroll = (intro_count + yTopMargin + 5) * 8; 
+
     u16 frame = 0;
 
     while (frame < INTRO_FRAMES)
     {
-        // Changement d'image toutes les 60s (1/3 de 180s)
         if (frame == (INTRO_FRAMES / 3))
         {
             resetScene();
             drawFullImageOn(BG_B, &intro2, PAL0);
             drawWrappedBlock(yTopMargin, intro_lines, intro_count);
-            // Repart du bas pour garder la meme lecture
-            vscroll = 224;
+            vscroll = (intro_count + yTopMargin + 5) * 8;
         }
         else if (frame == (2 * INTRO_FRAMES / 3))
         {
             resetScene();
             drawFullImageOn(BG_B, &intro3, PAL0);
             drawWrappedBlock(yTopMargin, intro_lines, intro_count);
-            vscroll = 224;
+            vscroll = (intro_count + yTopMargin + 5) * 8;
         }
 
-        // Fait MONTER (de bas -> haut)
-        if ((frame % SCROLL_STEP_PERIOD) == 0) vscroll -= SCROLL_PIX_PER_STEP;
+        // Fait monter le texte (défilement vers le haut)
+        if ((frame % SCROLL_STEP_PERIOD) == 0)
+            vscroll -= SCROLL_PIX_PER_STEP;
+
         VDP_setVerticalScroll(BG_A, vscroll);
 
         if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
