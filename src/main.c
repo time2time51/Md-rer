@@ -1,196 +1,151 @@
 #include <genesis.h>
-#include <resources.h>
-#include <string.h>
-#include <stdbool.h>
+#include "resources.h"
 
-// --- Gestion VRAM -----------------------------------------------------------
-static u16 nextTile;
+// -----------------------------------------------------------------------------
+// State commun
+// -----------------------------------------------------------------------------
+static u16 nextTile;                    // base tuile libre en VRAM (suite à TILE_USER_INDEX)
+static const u16 TEXT_PAL = PAL2;       // palette utilisée pour le texte (évite collision avec images)
 
-// réinitialise l’écran et la VRAM “utilisateur”
-static void resetScene(void)
+// util: attend N VBlanks
+static void waitFrames(u16 n)
 {
-    VDP_resetScreen();
-    VDP_setPlaneSize(64, 32, TRUE);                 // tables larges
-    VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
-    VDP_setTextPlan(BG_A);
-    VDP_setTextPriority(1);                         // texte au-dessus
-    VDP_clearPlane(BG_A, TRUE);
-    VDP_clearPlane(BG_B, TRUE);
-    nextTile = TILE_USER_INDEX;                     // point de départ SGDK
+    while (n--) SYS_doVBlankProcess();
 }
 
-// dessine une image plein écran sur un plan, réutilise PAL{palIndex}
-static void drawFullImageOn(VDPPlane plan, const Image* img, u16 palIndex)
+// util: centre un texte sur 40 colonnes
+static void drawCentered(u16 y, const char* str)
 {
-    // palette de l’image
+    u16 len = strlen(str);
+    if (len > 40) len = 40;
+    s16 x = (40 - (s16)len) / 2;
+    if (x < 0) x = 0;
+    VDP_drawText(str, (u16)x, y);
+}
+
+// clean + configuration sûre avant une scène
+static void resetScene(void)
+{
+    // plans larges, VRAM prête
+    VDP_setPlaneSize(64, 32, TRUE);
+    VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
+
+    VDP_setTextPlane(BG_A);
+    VDP_setTextPriority(0);
+    VDP_setTextPalette(TEXT_PAL);
+    VDP_clearTextArea(0, 0, 64, 32);
+
+    VDP_clearPlan(BG_A, TRUE);
+    VDP_clearPlan(BG_B, TRUE);
+
+    // point de départ des tuiles utilisateur
+    nextTile = TILE_USER_INDEX;
+}
+
+// dessine une image plein écran sur un plan (charge aussi sa palette)
+static void drawFullImageOn(VDPPlane plane, const Image* img, u16 x, u16 y, u16 palIndex)
+{
+    // charge la palette de l'image dans palIndex
     PAL_setPalette(palIndex, img->palette->data, DMA);
-
-    // upload & placement du tileset à l’indice courant
-    VDP_drawImageEx(
-        plan,
-        img,
-        TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, nextTile),
-        0, 0,
-        DMA
-    );
-
-    // avance l’indice pour un éventuel ajout
+    // dessine l'image (charge des tuiles à partir de nextTile)
+    VDP_drawImageEx(plane, img, nextTile, x, y, FALSE, TRUE);
     nextTile += img->tileset->numTile;
 }
 
-// --- Texte : word-wrap + centrage ------------------------------------------
-static void drawWrappedCentered(const char* text, u16 xMargin, u16 y, u16 widthCols, u16 pal)
-{
-    VDP_setTextPalette(pal);
-
-    const u16 cols = widthCols;
-    const u16 left = xMargin;
-    const u16 right = left + cols;
-
-    char line[64];
-    u16 cx = left;
-    u16 cy = y;
-
-    const char* p = text;
-    while (*p)
-    {
-        // saute espaces de tête
-        while (*p == ' ') p++;
-
-        // prend un mot
-        const char* start = p;
-        while (*p && *p != ' ' && *p != '\n') p++;
-        u16 wlen = (u16)(p - start);
-
-        // rupture de ligne dite “manuelle”
-        if (*p == '\n')
-        {
-            line[cx - left] = 0;
-            // centrage : recalcule x de départ pour la ligne courante
-            u16 used = (cx - left);
-            u16 startX = left + (cols > used ? (cols - used)/2 : 0);
-            VDP_drawTextBG(BG_A, line, startX, cy);
-            cy++;
-            cx = left;
-            SYS_doVBlankProcess();
-            p++; // saute '\n'
-            continue;
-        }
-
-        // si ça ne tient pas, on pousse la ligne en cours
-        if ((cx + wlen) > right)
-        {
-            line[cx - left] = 0;
-            u16 used = (cx - left);
-            u16 startX = left + (cols > used ? (cols - used)/2 : 0);
-            VDP_drawTextBG(BG_A, line, startX, cy);
-            cy++;
-            cx = left;
-
-            // petit délai pour la lecture
-            for (u16 i=0; i<12; i++) SYS_doVBlankProcess();
-        }
-
-        // copie le mot dans le tampon “line”
-        for (u16 i=0; i<wlen; i++)
-        {
-            line[cx - left + i] = start[i];
-        }
-        cx += wlen;
-
-        // espace si le prochain caractère est un espace
-        if (*p == ' ')
-        {
-            line[cx - left] = ' ';
-            cx++;
-        }
-    }
-
-    // purge le reste
-    if (cx > left)
-    {
-        line[cx - left] = 0;
-        u16 used = (cx - left);
-        u16 startX = left + (cols > used ? (cols - used)/2 : 0);
-        VDP_drawTextBG(BG_A, line, startX, cy);
-    }
-}
-
-// --- Intro ------------------------------------------------------------------
-static const char* INTRO_TXT =
-"Reims, la nuit. La ville se meurt.\n"
-"La corruption et la drogue rongent les rues.\n"
-"Cela fait 10 ans que Jimmy et Houcine sont tombes et ont disparu derriere les barreaux.\n"
-"Depuis, les gangs regnent en maitre.\n"
-"La police est corrompue, les politiciens aussi.\n"
-"Les dealers font la loi dans les quartiers.\n"
-"Les habitants n'ont plus d'espoir.\n"
-"Mais ce soir...\n"
-"Jimmy et Houcine sortent de prison.\n"
-"Leur colere est intacte.\n"
-"Ils vont faire payer ceux qui ont detruit leurs vies.\n"
-"REIMS EN RAGE";
-
+// -----------------------------------------------------------------------------
+// Intro
+// -----------------------------------------------------------------------------
 static void playIntro(void)
 {
-    // Musique
-    XGM_setLoopNumber(-1);            // en boucle
-    XGM_startPlayResource(&intro_music);
-
-    // 1) Ecran 1 + texte
     resetScene();
-    drawFullImageOn(BG_B, &intro1, PAL0);
 
-    // palette texte (PAL2, orange doux)
-    PAL_setPaletteColor(PAL2*16 + 1, RGB24_TO_VDPCOLOR(255,120,64));
-    PAL_setPaletteColor(PAL2*16 + 2, RGB24_TO_VDPCOLOR(32,16,8));
-    VDP_setTextPalette(PAL2);
+    // Lance la musique (intro_music vient de resources.res -> XGM)
+    XGM_init();
+    XGM_startPlay(intro_music);
 
-    // zone de texte : 36 colonnes, marges de 2 colonnes
-    drawWrappedCentered(INTRO_TXT, 2, 6, 36, PAL2);
+    // Couleur du texte (orange lisible)
+    PAL_setPaletteColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(0xFF7840)); // lettres
+    PAL_setPaletteColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(0x000000)); // fond
 
-    // laisse 7 secondes de lecture ~ 60 FPS
-    for (u16 f=0; f<7*60; f++) SYS_doVBlankProcess();
+    // ---- Ecran 1 : ciel + lune
+    drawFullImageOn(BG_B, &intro1, 0, 0, PAL0);
 
-    // 2) Ecran 2 (reutilise la VRAM → pas de dépassement)
+    // texte (lignes <= 40 colonnes pour éviter le débord)
+    const char* lines1[] = {
+        "Reims, la nuit. La ville se meurt.",
+        "La corruption et la drogue rongent les rues.",
+        "Cela fait 10 ans que Jimmy et Houcine",
+        "sont tombes et ont disparu derriere les barreaux.",
+        "Depuis, les gangs regnent en maitre.",
+        "La police est corrompue, les politiciens absents.",
+        "Les dealers font la loi dans les quartiers.",
+        "Les habitants n'ont plus d'espoir.",
+        "",
+        "Mais ce soir...",
+        "Jimmy et Houcine sortent de prison.",
+        "Leur colere est intacte.",
+        "Ils vont faire payer ceux qui ont detruit",
+        "REIMS EN RAGE"
+    };
+    for (u16 i = 0; i < sizeof(lines1)/sizeof(lines1[0]); i++)
+    {
+        drawCentered(4 + i, lines1[i]);
+        waitFrames(30); // ralentit l'apparition des lignes
+    }
+
+    // petite pause avant image suivante
+    waitFrames(120);
+
+    // ---- Ecran 2 : skyline
     resetScene();
-    drawFullImageOn(BG_B, &intro2, PAL0);
-    for (u16 f=0; f<4*60; f++) SYS_doVBlankProcess();
+    drawFullImageOn(BG_B, &intro2, 0, 0, PAL0);
+    waitFrames(180);
 
-    // 3) Ecran 3
+    // ---- Ecran 3 : rue
     resetScene();
-    drawFullImageOn(BG_B, &intro3, PAL0);
-    for (u16 f=0; f<4*60; f++) SYS_doVBlankProcess();
+    drawFullImageOn(BG_B, &intro3, 0, 0, PAL0);
+    waitFrames(180);
 
-    // Stop musique à la fin de l’intro si tu veux
-    // XGM_stopPlay();
+    // La musique continue jusqu'au titre
 }
 
-// --- Titre ------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Titre
+// -----------------------------------------------------------------------------
 static void showTitle(void)
 {
     resetScene();
-    drawFullImageOn(BG_B, &title, PAL0);
+    drawFullImageOn(BG_B, &title, 0, 0, PAL0);
 
-    // Attente du START (ou quelques secondes)
-    u16 wait = 10*60;
-    while (wait--)
+    // Optionnel : petit "PRESS START" propre (mais tu peux le retirer)
+    // drawCentered(26, "PRESS START");
+
+    // Laisse l'ecran titre tant que START n'est pas presse
+    // (Si tu ne veux pas de blocage, remplace par un simple waitFrames(300);)
+    u16 t = 0;
+    while(TRUE)
     {
-        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
         SYS_doVBlankProcess();
+        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
+
+        // clignotement facultatif du message (de-commenter si tu remets le texte)
+        // if ((t++ & 31) == 0) VDP_clearTextArea(0, 26, 40, 1);
+        // if ((t & 63) == 0) drawCentered(26, "PRESS START");
     }
 }
 
-int main(bool hard)
+// -----------------------------------------------------------------------------
+// main
+// -----------------------------------------------------------------------------
+int main(void)
 {
-    (void)hard;
+    // initial SGDK (joy, interrupts)
     JOY_init();
-    XGM_init();            // init driver XGM
 
     playIntro();
     showTitle();
 
-    // boucle vide (placeholder jeu)
-    while (1) SYS_doVBlankProcess();
+    // boucle vide : titre atteint
+    while(TRUE) SYS_doVBlankProcess();
     return 0;
 }
