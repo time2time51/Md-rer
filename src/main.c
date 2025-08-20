@@ -1,42 +1,7 @@
 #include <genesis.h>
-#include "resources.h"   // intro1, intro2, intro3, title, intro_music
+#include "resources.h"
 
-// ---------- Config ----------
-#define INTRO_DURATION_FRAMES   (90 * 60)     // 90 secondes @60fps
-#define INTRO_SEGMENT_FRAMES    (30 * 60)     // 30s par image
-#define TEXT_SCROLL_PERIOD      30            // rafraîchit le scroll texte toutes les 30 frames (~0.5s)
-#define PRESS_BLINK_PERIOD      20            // clignotement titre
-
-typedef enum { STATE_INTRO, STATE_TITLE } GameState;
-static GameState state = STATE_INTRO;
-
-// Input
-static u16 joy1_state = 0;
-
-static void onJoy(u16 joy, u16 changed, u16 stateNow)
-{
-    if (joy == JOY_1) joy1_state = stateNow;
-}
-
-// Dessin d'une image plein écran sur un BG donné
-static void drawFullImageOn(VDPPlane plane, const Image *img, u16 *ioTileIndex, u16 palIndex)
-{
-    // Palette de l'image -> palIndex (attention: .data)
-    PAL_setPalette(palIndex, img->palette->data, DMA);
-
-    // Dessin image (320x224) à (0,0)
-    VDP_drawImageEx(
-        plane,
-        img,
-        TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, *ioTileIndex),
-        0, 0,
-        TRUE,      // DMA tiles
-        TRUE       // DMA map
-    );
-    *ioTileIndex += img->tileset->numTile;
-}
-
-// Texte d'intro
+// ----- Texte d'intro -----
 static const char *intro_lines[] = {
     "Reims, la nuit. La ville se meurt.",
     "La corruption et la drogue rongent les rues.",
@@ -51,125 +16,163 @@ static const char *intro_lines[] = {
     "Leur colere est intacte.",
     "Ils vont faire payer ceux qui ont detruit leur ville.",
     "",
-    "REIMS EN RAGE"
+    "REIMS EN RAGE",
+    ""
 };
-#define INTRO_LINES_COUNT (sizeof(intro_lines)/sizeof(intro_lines[0]))
+#define INTRO_LINES (sizeof(intro_lines)/sizeof(intro_lines[0]))
 
-// Affiche l'intro (bloquant jusqu'au passage a l'ecran titre)
+// ----- Utilitaires images / palettes -----
+static u16 nextTile = TILE_USERINDEX;
+
+// dessine une image plein ecran sur un plan, charge sa palette a l'index voulu
+static void drawFullImageOn(VDPPlane plan, const Image *img, u16 palIndex)
+{
+    PAL_setPalette(palIndex, img->palette->data, DMA);
+    VDP_drawImageEx(
+        plan,
+        img,
+        TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, nextTile),
+        0, 0,
+        FALSE,
+        TRUE
+    );
+    nextTile += img->tileset->numTile;
+}
+
+// efface un plan (texte)
+static void clearPlane(VDPPlane plan)
+{
+    VDP_clearPlane(plan, TRUE);
+}
+
+// ----- Intro -----
 static void playIntro(void)
 {
-    // Video setup
-    VDP_setScreenWidth320();
-    VDP_setScreenHeight224();
+    // grosses tables pour scroller tranquillement
     VDP_setPlaneSize(64, 32, TRUE);
 
-    // Clean & noir
-    VDP_clearPlane(BG_A, TRUE);
-    VDP_clearPlane(BG_B, TRUE);
-    PAL_setColors(0, (u16*)palette_black, 64, DMA);
+    // Plan A = images / Plan B = texte
+    VDP_setBackgroundColor(0); // noir
 
-    // Musique XGM depuis la ressource
-    XGM_startPlay(intro_music);
+    // Musique d'intro – elle continuera jusqu'au titre (pas d'arrêt ici)
+    XGM_startPlayResource(&intro_music);
 
-    // BG_B = images, BG_A = texte
-    u16 tileIndexB = TILE_USER_INDEX;
-    u16 palBG = PAL1;
+    // images: on laisse ~30 s chacune (90 s / 3), mais le texte défile en continu au-dessus
+    const u16 palImg = PAL0;
+    const u16 palTxt = PAL1;
 
-    drawFullImageOn(BG_B, &intro1, &tileIndexB, palBG);
+    // police lisible (palette texte = blanc/orange doux)
+    // on part d'une base blanche, tu peux ajuster si besoin
+    u16 palTextData[16];
+    memcpy(palTextData, palette_white, 16*2);
+    palTextData[2] = RGB24_TO_VDPCOLOR(0xD05030); // orange sombre pour le texte
+    PAL_setPalette(palTxt, palTextData, DMA);
+    VDP_setTextPalette(palTxt);
 
-    // Texte initial (posé en bas de l'écran)
-    s16 baseY = 24; // lignes partent du bas et remontent
-    for (u16 i = 0; i < INTRO_LINES_COUNT; i++)
-        VDP_drawText(intro_lines[i], 2, baseY + (s16)i*2);
+    // charge la 1ere image
+    clearPlane(BG_A);
+    drawFullImageOn(BG_A, &intro1, palImg);
 
-    // Boucle d'intro
-    u32 frames = 0;
-    while (frames < INTRO_DURATION_FRAMES)
+    // prépare le texte sur le plan B
+    clearPlane(BG_B);
+    const int lineH   = 14;            // hauteur logique par ligne
+    const int firstY  = 27;            // position de départ (écran 224 lignes -> 27 donne un bon look)
+    const int totalTextPixel = (int)INTRO_LINES * lineH + 224; // +224 pour complètement faire sortir le bloc
+    const int durFrames = 90 * 60;     // 90 secondes @60 Hz
+    int frame = 0;
+
+    // peint toutes les lignes une seule fois (on scrollera le plan B)
+    for (u16 i = 0; i < INTRO_LINES; i++)
     {
-        // Change d'image toutes les 30s
-        if (frames == INTRO_SEGMENT_FRAMES)
-        {
-            VDP_clearPlane(BG_B, TRUE);
-            tileIndexB = TILE_USER_INDEX;
-            drawFullImageOn(BG_B, &intro2, &tileIndexB, palBG);
-        }
-        else if (frames == (INTRO_SEGMENT_FRAMES * 2))
-        {
-            VDP_clearPlane(BG_B, TRUE);
-            tileIndexB = TILE_USER_INDEX;
-            drawFullImageOn(BG_B, &intro3, &tileIndexB, palBG);
-        }
-
-        // Scroll du texte (toutes ~0.5s)
-        if ((frames % TEXT_SCROLL_PERIOD) == 0)
-        {
-            VDP_clearPlane(BG_A, TRUE);
-
-            s16 shift = -(frames / TEXT_SCROLL_PERIOD); // 1 "ligne" toutes 0.5s
-            s16 y0 = baseY + shift;
-
-            for (u16 i = 0; i < INTRO_LINES_COUNT; i++)
-            {
-                s16 y = y0 + (s16)i*2;
-                if (y >= 0 && y < 28)
-                    VDP_drawText(intro_lines[i], 2, y);
-            }
-        }
-
-        // Skip si START (on n'affiche rien à l'écran)
-        if (joy1_state & BUTTON_START) break;
-
-        frames++;
-        SYS_doVBlankProcess();
+        VDP_drawTextBG(BG_B, intro_lines[i], 3, firstY/8 + (i*(lineH/8)));
     }
 
-    state = STATE_TITLE; // la musique continue
+    // timings de swap d'images
+    const int swap1 = durFrames/3;      // après 30 s
+    const int swap2 = (2*durFrames)/3;  // après 60 s
+
+    // boucle principale: 90 s ou jusqu'au START
+    while (frame < durFrames)
+    {
+        // scroll Y calculé pour que le bloc se déplace sur tout totalTextPixel
+        int scrollY = (frame * totalTextPixel) / durFrames;
+        VDP_setVerticalScroll(BG_B, -scrollY); // texte monte doucement
+
+        // change l'image de fond aux jalons
+        if (frame == swap1)
+        {
+            clearPlane(BG_A);
+            drawFullImageOn(BG_A, &intro2, palImg);
+        }
+        else if (frame == swap2)
+        {
+            clearPlane(BG_A);
+            drawFullImageOn(BG_A, &intro3, palImg);
+        }
+
+        // skip intro
+        u16 keys = JOY_readJoypad(JOY_1);
+        if (keys & BUTTON_START) break;
+
+        SYS_doVBlankProcess();
+        frame++;
+    }
 }
 
+// ----- Ecran titre -----
 static void showTitle(void)
 {
-    VDP_clearPlane(BG_A, TRUE);
-    VDP_clearPlane(BG_B, TRUE);
+    // on garde la musique qui tourne
+    nextTile = TILE_USERINDEX;
     VDP_setPlaneSize(64, 32, TRUE);
+    VDP_setBackgroundColor(0);
+    clearPlane(BG_A);
+    clearPlane(BG_B);
 
-    u16 tileIndexA = TILE_USER_INDEX;
-    drawFullImageOn(BG_A, &title, &tileIndexA, PAL0);
-}
+    drawFullImageOn(BG_A, &title, PAL0);
 
-static void runTitle(void)
-{
-    static u16 blink = 0;
-    blink++;
-
-    if ((blink % (20*2)) < 20)
-        VDP_drawText("PRESS START", 12, 21);
-    else
-        VDP_clearText(12, 21, 12);
-}
-
-int main(bool hardReset)
-{
-    (void)hardReset;
-
-    JOY_init();
-    JOY_setEventHandler(onJoy);
-
-    PAL_setColors(0, (u16*)palette_black, 64, DMA);
-
-    playIntro();   // images + texte, skip avec START
-    showTitle();   // musique continue
+    // “PRESS START” clignotant en code (pas dans l'image)
+    const char *press = "PRESS  START";
+    s16 blink = 0;
 
     while (1)
     {
-        switch (state)
-        {
-            case STATE_TITLE:
-                runTitle();
-                break;
-            default:
-                break;
-        }
+        if ((blink >> 4) & 1)
+            VDP_drawTextBG(BG_B, press, 16 - 6, 25);  // centré-ish
+        else
+            VDP_clearTextAreaBG(BG_B, 0, 25, 40, 1);
+
+        u16 keys = JOY_readJoypad(JOY_1);
+        if (keys & BUTTON_START) break;
+
+        blink++;
         SYS_doVBlankProcess();
     }
+
+    // ici on pourrait enchaîner vers le menu / jeu…
+}
+
+static void joyCallback(u16 joy, u16 changed, u16 state)
+{
+    (void)joy; (void)changed; (void)state;
+}
+
+int main(bool hard)
+{
+    (void)hard;
+
+    JOY_init();
+    JOY_setEventHandler(joyCallback);
+
+    // XGM: active le driver (obligatoire pour la musique)
+    XGM_init();
+
+    // Intro 90s scrollee et skippable (sans “appuie sur start” affiché)
+    playIntro();
+
+    // Puis titre, musique intacte
+    showTitle();
+
+    while (1) SYS_doVBlankProcess();
     return 0;
 }
