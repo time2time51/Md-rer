@@ -36,7 +36,7 @@ jobs:
           echo "Res dir     = $RES_DIR"
           ls -la "$RES_DIR" || true
 
-      # 2) Préparer les PNG: 320x224, suppression alpha, forcer Truecolor (RGB)
+      # 2) Préparer les PNG (320x224, truecolor RGB, pas d’alpha)
       - name: Prepare PNGs for SGDK (resize + force truecolor)
         shell: bash
         run: |
@@ -57,7 +57,7 @@ jobs:
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # 4) Build SGDK dans le conteneur (ENTRYPOINT forcé à /bin/sh)
+      # 4) Build SGDK dans le conteneur (entrypoint shell + fallback make)
       - name: Build with SGDK (Docker)
         shell: bash
         run: |
@@ -68,23 +68,35 @@ jobs:
             -e GNUMAKEFLAGS= \
             -v "$GITHUB_WORKSPACE":/m68k \
             -w "/m68k/$PROJECT_DIR" \
-            registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
-            -lc 'unset MAKEFLAGS GNUMAKEFLAGS; make -j1'
+            -t registry.gitlab.com/doragasu/docker-sgdk:v2.11 \
+            -c "make -j1 || make"
 
-      # 5) Rendre les fichiers au runner
+      # 5) Vérif : lister le dossier out/
+      - name: List out dir
+        shell: bash
+        run: |
+          PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
+          echo "=== Contenu de $PROJECT_DIR/out ==="
+          ls -la "$PROJECT_DIR/out" || true
+
+      # 6) Rendre les fichiers au runner (sinon cp peut échouer)
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
-      # 6) Préparer le nom du fichier ROM
+      # 7) Préparer le nom du fichier ROM (prend le 1er .bin trouvé)
       - name: Prepare ROM filename
         id: name
         shell: bash
         run: |
+          set -e
           PROJECT_DIR="${{ steps.paths.outputs.project_dir }}"
-          ROM="$PROJECT_DIR/out/rom.bin"
-          if [ ! -f "$ROM" ]; then
-            echo "ROM not found at $ROM" ; ls -la "$PROJECT_DIR/out" || true ; exit 1
+          ROM=$(find "$PROJECT_DIR/out" -maxdepth 1 -type f -name "*.bin" | head -n1 || true)
+          if [ -z "$ROM" ]; then
+            echo "ERREUR: Aucun .bin trouvé dans $PROJECT_DIR/out"
+            ls -la "$PROJECT_DIR/out" || true
+            exit 1
           fi
+          echo "ROM détectée: $ROM"
           REPO="${GITHUB_REPOSITORY##*/}"
           VER="${GITHUB_REF_NAME}"
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
@@ -94,8 +106,9 @@ jobs:
           fi
           cp "$ROM" "$OUT"
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
+          ls -la "$OUT"
 
-      # 7) Upload de la ROM en artifact
+      # 8) Upload de la ROM en artifact
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
