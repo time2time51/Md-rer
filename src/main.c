@@ -1,105 +1,21 @@
 #include <genesis.h>
 #include "resources.h"
 
-// -----------------------------------------------------------------------------
-// Réglages
-// -----------------------------------------------------------------------------
-#define INTRO_SECONDS            90
-#define FPS                      60
-#define INTRO_FRAMES             (INTRO_SECONDS * FPS)
+// ---------- paramètres ----------
+#define PLANE_W         64
+#define PLANE_H         32
+#define FRAMES_PER_PX   6      // 1 pixel de scroll toutes les 6 frames  (~5x plus rapide que 30)
+#define LINES_VISIBLE   28     // hauteur écran en lignes de texte (28)
+#define TEXT_PAL        PAL2   // palette texte (différente de l'image pour éviter les conflits)
 
-// Vitesse: 1 pixel / 30 frames (x30)
-#define SCROLL_PIX_PER_STEP      1
-#define SCROLL_STEP_PERIOD       30
-
-#define TEXT_PAL                 PAL2
-#define TEXT_COLOR               0xFF7840  // orange
-#define TEXT_BG                  0x000000
-#define MAX_COLS                 40
-
-static u16 nextTile;
-
-static void waitFrames(u16 n){ while (n--) SYS_doVBlankProcess(); }
-
-static void resetScene(void)
-{
-    VDP_setPlaneSize(64, 64, TRUE);
-    VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
-
-    VDP_setTextPlane(BG_A);
-    VDP_setTextPriority(0);
-    VDP_setTextPalette(TEXT_PAL);
-
-    VDP_clearPlane(BG_A, TRUE);
-    VDP_clearPlane(BG_B, TRUE);
-
-    nextTile = TILE_USER_INDEX;
-}
-
-static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
-{
-    PAL_setPalette(palIndex, img->palette->data, DMA);
-    VDP_drawImageEx(plane, img, nextTile, 0, 0, FALSE, TRUE);
-    nextTile += img->tileset->numTile;
-}
-
-static void drawCenteredLine(u16 y, const char* s)
-{
-    char buf[MAX_COLS + 1];
-    u16 len = strlen(s);
-    if (len > MAX_COLS) len = MAX_COLS;
-    memcpy(buf, s, len);
-    buf[len] = 0;
-
-    s16 x = (MAX_COLS - (s16)len) / 2;
-    if (x < 0) x = 0;
-    VDP_drawText(buf, (u16)x, y);
-}
-
-static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
-{
-    char out[MAX_COLS + 1];
-    u16 y = yStart;
-
-    for (u16 i = 0; i < count; i++)
-    {
-        const char* p = lines[i];
-        while (*p)
-        {
-            u16 take = 0, lastSpace = 0;
-            while (p[take] && take < MAX_COLS)
-            {
-                if (p[take] == ' ') lastSpace = take;
-                take++;
-            }
-            if (p[take] && lastSpace) take = lastSpace;
-
-            while (*p == ' ') p++;
-            u16 real = take;
-            while (real && p[real - 1] == ' ') real--;
-
-            memcpy(out, p, real);
-            out[real] = 0;
-
-            drawCenteredLine(y++, out);
-
-            p += take;
-            while (*p == ' ') p++;
-        }
-
-        if (lines[i][0] == 0) y++;
-    }
-    return y - yStart;
-}
-
-static const char* intro_lines[] =
-{
+// ---------- texte ----------
+static const char* intro_lines[] = {
     "Reims, la nuit. La ville se meurt.",
     "La corruption et la drogue rongent les rues.",
     "Cela fait 10 ans que Jimmy et Houcine",
     "sont tombes et ont disparu derriere les barreaux.",
     "Depuis, les gangs regnent en maitre.",
-    "La police est corrompue, les politiciens achetes.",
+    "La police est corrompue, les politiciens aussi.",
     "Les dealers font la loi dans les quartiers.",
     "Les habitants n'ont plus d'espoir.",
     "",
@@ -110,93 +26,147 @@ static const char* intro_lines[] =
     "",
     "REIMS EN RAGE"
 };
+#define INTRO_LINES  (sizeof(intro_lines)/sizeof(intro_lines[0]))
 
+// ----------- petits helpers ----------
+static void clearPlane(VDPPlane p)
+{
+    VDP_clearPlane(p, TRUE);
+}
+
+static void drawCenteredText(u16 y, const char* s)
+{
+    int len = strlen(s);
+    int x = (40 - len) / 2;
+    if (x < 0) x = 0;
+    VDP_drawText(s, x, y);
+}
+
+// Dessine une image plein écran 320x224 sur un plan
+static u16 nextTile = TILE_USER_INDEX;
+static void drawFullImageOn(VDPPlane plane, const Image* img, bool loadPal)
+{
+    VDP_drawImageEx(plane, img, nextTile, 0, 0, loadPal, TRUE);
+    nextTile += img->tileset->numTile;
+}
+
+// Dessine toutes les lignes du bloc, en commençant par la première
+// exactement sur la dernière ligne visible (y=27).
+static void drawIntroBlockAtBottom(void)
+{
+    const u16 yStart = 27; // tout en bas
+    for (u16 i = 0; i < INTRO_LINES; i++)
+    {
+        u16 y = yStart + i;               // on dépasse le bas vers "le bas du plan"
+        drawCenteredText(y, intro_lines[i]);
+    }
+}
+
+// ------------- scènes -------------
 static void playIntro(void)
 {
-    resetScene();
+    // VRAM / plans
+    VDP_setPlaneSize(PLANE_W, PLANE_H, TRUE);
+    VDP_setTextPlane(BG_A);
+    clearPlane(BG_A);
+    clearPlane(BG_B);
 
-    // musique
-    XGM_startPlay(intro_music);
+    // fond image (BG_B)
+    nextTile = TILE_USER_INDEX;
+    drawFullImageOn(BG_B, &intro1, TRUE);  // charge palette des images
 
-    // palette texte
-    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
-    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
+    // texte (BG_A)
+    PAL_setPaletteColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(0x000000)); // fond
+    PAL_setPaletteColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(0xFF7840)); // lettres
     VDP_setTextPalette(TEXT_PAL);
 
-    // 1) Fond 1
-    drawFullImageOn(BG_B, &intro1, PAL0);
+    drawIntroBlockAtBottom();
 
-    // 2) On dessine TOUT le bloc plus bas que l'écran...
-    //    L'écran fait 28 lignes (224 px / 8). La dernière ligne visible = y=27.
-    const u16 yFirstLineOnPlane = 40;                 // on dessine la 1re ligne à y=40 (hors écran)
-    drawWrappedBlock(yFirstLineOnPlane, intro_lines, sizeof(intro_lines)/sizeof(intro_lines[0]));
+    // musique
+    XGM_startPlayResource(&intro_music);
 
-    // ...puis on règle le scroll pour que cette 1re ligne soit pile sur la ligne 27 (bas écran)
-    s16 vscroll = -((s16)(yFirstLineOnPlane - 27) * 8);   // 8 px par ligne
-    VDP_setVerticalScroll(BG_A, vscroll);
+    // scrolling + changement d’images
+    s16 vscroll = 0;                // on part sans décalage (1re ligne visible en bas)
+    u32 frame  = 0;
+    u16 imgIdx = 0;
 
-    // Boucle d'intro
-    u32 frame = 0;
-    while (frame < INTRO_FRAMES)
+    while (TRUE)
     {
-        // change de fond sans reset pour ne PAS casser le scroll
-        if (frame == (INTRO_FRAMES / 3))         drawFullImageOn(BG_B, &intro2, PAL0);
-        else if (frame == (2 * INTRO_FRAMES / 3))drawFullImageOn(BG_B, &intro3, PAL0);
+        // Changement d'image toutes ~7 secondes (~420 frames)
+        if (frame == 420) { drawFullImageOn(BG_B, &intro2, TRUE); imgIdx = 1; }
+        if (frame == 840) { drawFullImageOn(BG_B, &intro3, TRUE); imgIdx = 2; }
 
-        // défilement: 1 px toutes 30 frames
-        if ((frame % SCROLL_STEP_PERIOD) == 0)
+        // Scroll vertical (vers le haut) – 1 px toutes FRAMES_PER_PX
+        if ((frame % FRAMES_PER_PX) == 0)
         {
-            vscroll += SCROLL_PIX_PER_STEP;      // contenu monte d'1 px
+            vscroll--;
             VDP_setVerticalScroll(BG_A, vscroll);
         }
 
-        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
+        // Skip si START
+        u16 joy = JOY_readJoypad(JOY_1);
+        if (joy & BUTTON_START) break;
 
         SYS_doVBlankProcess();
         frame++;
+
+        // quand tout est a peu pres sorti de l'ecran, on quitte
+        if (frame > (INTRO_LINES * 16 + 600)) break;
     }
+
+    // stop musique au passage à l’écran titre
+    XGM_stopPlay();
 }
 
 static void showTitle(void)
 {
-    resetScene();
-    drawFullImageOn(BG_B, &title, PAL0);
+    // plans
+    VDP_setPlaneSize(PLANE_W, PLANE_H, TRUE);
+    VDP_setTextPlane(BG_A);
+    clearPlane(BG_A);
+    clearPlane(BG_B);
 
-    // Texte "PRESS START" clignotant (palette texte assurée)
-    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
-    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
-    VDP_setTextPalette(TEXT_PAL);
+    nextTile = TILE_USER_INDEX;
+    drawFullImageOn(BG_B, &title, TRUE);
 
-    const char* pressStart = "PRESS START";
+    // texte press start clignotant
+    const char* press = "PRESS  START";
     u16 blink = 0;
 
     while (TRUE)
     {
+        // blink toutes 20 frames
+        if ((blink / 20) % 2 == 0)
+            drawCenteredText(24, press);
+        else
+            VDP_clearTextLine(24);
+
+        // START pour quitter
         if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
 
-        bool on = ((blink / 30) % 2) == 0; // ~0,5 s
-        if (on)
-        {
-            u16 len = strlen(pressStart);
-            if (len > MAX_COLS) len = MAX_COLS;
-            s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-            VDP_drawText(pressStart, (u16)x, 25);
-        }
-        else VDP_clearTextArea(0, 25, MAX_COLS, 1);
-
-        VDP_waitVSync();
         blink++;
+        SYS_doVBlankProcess();
     }
 }
 
-int main(bool hardReset)
+// ------------- entrée -------------
+int main(void)
 {
-    (void)hardReset;
+    // pads
     JOY_init();
+
+    // VDP de base
+    VDP_setScreenWidth320();
+    VDP_setScreenHeight224();
 
     playIntro();
     showTitle();
 
-    while (TRUE) SYS_doVBlankProcess();
+    // boucle vide (placeholder pour le menu / jeu)
+    while (TRUE)
+    {
+        SYS_doVBlankProcess();
+    }
+
     return 0;
 }
