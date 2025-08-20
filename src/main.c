@@ -118,19 +118,49 @@ static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 // -----------------------------------------------------------------------------
 static const char* intro_lines[] =
 {
-    "Reims, la nuit. La ville se meurt.",
-    "La corruption et la drogue rongent les rues.",
-    "Cela fait 10 ans que Jimmy et Houcine",
-    "sont tombes et ont disparu derriere les barreaux.",
-    "Depuis, les gangs regnent en maitre.",
-    "La police est corrompue, les politiciens achetes.",
-    "Les dealers font la loi dans les quartiers.",
-    "Les habitants n'ont plus d'espoir.",
+    // Bloc 1 – La ville
+    "Reims, la nuit. La ville suffoque.",
+    "Les bars ne ferment jamais.",
+    "Les terrasses de Drouet-d'Erlon brillent de neon.",
+    "Mais derriere les verres d'alcool, la peur rode.",
+    "La drogue coule a flot, la corruption est partout.",
+    "Les flics regardent ailleurs. Les juges encaissent.",
+    "Les habitants survivent dans une prison a ciel ouvert.",
     "",
-    "Mais ce soir...",
-    "Jimmy et Houcine sortent de prison.",
-    "Leur colere est intacte.",
-    "Ils vont faire payer ceux qui ont detruit leur ville.",
+
+    // Bloc 2 – Jimmy
+    "Jimmy, 35 ans.",
+    "Un boxeur taille pour encaisser et rendre coup pour coup.",
+    "Son corps sec et nerveux a ete forge dans la rage.",
+    "Il a appris a frapper comme on respire.",
+    "Sa colere a grandi derriere les murs de la prison.",
+    "",
+
+    // Bloc 3 – Houcine
+    "Houcine, 40 ans.",
+    "Sec, rapide, precis comme une lame.",
+    "Ses poings et ses pieds parlent le langage de Bruce Lee.",
+    "Dix ans enferme n'ont pas casse son corps.",
+    "Ils ont durci son esprit.",
+    "",
+
+    // Bloc 4 – Leur passe
+    "Ensemble, ils ont connu la haine.",
+    "Ensemble, ils ont paye le prix du sang.",
+    "Un meurtre les a condamnes a dix ans de nuit.",
+    "Mais derriere les barreaux, leur rage n'a jamais faibli.",
+    "",
+
+    // Bloc 5 – La vengeance
+    "Aujourd'hui, les portes s'ouvrent.",
+    "La nuit les attend.",
+    "Les gangs, les dealers, les politiciens corrompus.",
+    "Tous vont gouter a leur retour.",
+    "",
+    "Reims est pourrie.",
+    "Mais Jimmy et Houcine sont pires.",
+    "",
+    "Et la ville va saigner.",
     "",
     "REIMS EN RAGE"
 };
