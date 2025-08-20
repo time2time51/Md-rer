@@ -6,5 +6,5 @@ IMAGE intro3 "intro3.PNG" 0
 # --- ECRAN TITRE ---
 IMAGE title  "Title.PNG" 0
 
-# --- MUSIQUE (convertie automatiquement par le workflow) ---
+# --- MUSIQUE (converti automatiquement par le workflow) ---
 XGM intro_music "intro.vgm"
