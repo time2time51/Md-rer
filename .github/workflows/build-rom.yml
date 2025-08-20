@@ -60,7 +60,7 @@ jobs:
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # Build dans Docker (entrypoint shell + make) - SECTION CORRIGÉE
+      # Build dans Docker (entrypoint shell + make) — SANS -c dans options
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -71,7 +71,6 @@ jobs:
             -e GNUMAKEFLAGS=
             -v ${{ github.workspace }}:/m68k
             -w /m68k/${{ steps.paths.outputs.project_dir }}
-            -c
           run: |
             set -e
             mkdir -p src/boot out
