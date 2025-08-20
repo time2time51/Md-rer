@@ -7,4 +7,4 @@ IMAGE intro3 "intro3.PNG" 0
 IMAGE title  "Title.PNG" 0
 
 # --- MUSIQUE (convertie automatiquement par le workflow) ---
-XGM intro_music "intro.vgz"
+XGM intro_music "intro.vgm"
