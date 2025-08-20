@@ -16,12 +16,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Détection des répertoires projet / res
+      # Détecte où est le projet (racine ou sous-dossier)
       - name: Locate project/res folders
         id: paths
         shell: bash
         run: |
-          set -e
           if [ -d "Md-rer/res" ]; then
             echo "project_dir=Md-rer" >> $GITHUB_OUTPUT
             echo "res_dir=Md-rer/res" >> $GITHUB_OUTPUT
@@ -35,42 +34,40 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # Vérif/sanitize du resources.res (UTF-8 sans BOM, LF) + aperçu
-      - name: Verify & sanitize resources.res
+      # NEW — Sanitize resources.res (supprime BOM, accents et CRLF)
+      - name: Sanitize resources.res
         shell: bash
         run: |
           set -euo pipefail
-          RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          RES_FILE="$RES_DIR/resources.res"
-
-          if [ ! -f "$RES_FILE" ]; then
-            echo "ERREUR: $RES_FILE introuvable" >&2
-            exit 1
+          RES="${{ steps.paths.outputs.res_dir }}/resources.res"
+          if [ -f "$RES" ]; then
+            echo "=== BEFORE sanitize ==="
+            wc -c "$RES" || true
+            file "$RES" || true
+            head -n 20 "$RES" || true
+            echo "---- hexdump (64 bytes) ----"
+            head -c 64 "$RES" | hexdump -C || true
+            # convertit CRLF -> LF
+            dos2unix "$RES" >/dev/null 2>&1 || true
+            # supprime BOM si présent
+            if [ "$(head -c 3 "$RES" | hexdump -v -e '/1 "%02X"')" = "EFBBBF" ]; then
+              tail -c +4 "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
+            fi
+            # enlève les caractères non ASCII (dans les COMMENTAIRES uniquement)
+            # => on remplace les caractères 0x80-0xFF par leur version "translit" quand possible
+            iconv -f UTF-8 -t ASCII//TRANSLIT -c "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
+            echo "=== AFTER sanitize ==="
+            wc -c "$RES" || true
+            file "$RES" || true
+            head -n 20 "$RES" || true
+          else
+            echo "::warning::${RES} introuvable"
           fi
 
-          echo "=== BEFORE sanitize ==="
-          wc -c "$RES_FILE" || true
-          file "$RES_FILE" || true
-          head -n 50 "$RES_FILE" || true
-          echo "---- hexdump (64 bytes) ----"
-          head -c 64 "$RES_FILE" | hexdump -C || true
-
-          # Enlève un éventuel BOM + force fins de ligne Unix
-          sudo apt-get update >/dev/null 2>&1 || true
-          sudo apt-get install -y dos2unix >/dev/null 2>&1
-          sed -i '1s/^\xEF\xBB\xBF//' "$RES_FILE"
-          dos2unix "$RES_FILE"
-
-          echo "=== AFTER sanitize ==="
-          wc -c "$RES_FILE"
-          file "$RES_FILE"
-          head -n 20 "$RES_FILE"
-
-      # Prépare les PNG (320x224, <=16 couleurs)
+      # Prépare les PNG (320x224, 16 couleurs)
       - name: Prepare PNGs for SGDK (indexed 16 colors)
         shell: bash
         run: |
-          set -e
           sudo apt-get update
           sudo apt-get install -y imagemagick
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
@@ -84,29 +81,36 @@ jobs:
               -dither None -colors 16 -type palette \
               PNG8:"$img"
             COLORS=$(identify -format "%k" "$img" || echo "?")
-            echo " -> colors=$COLORS (<=16 OK)"
+            echo " -> colors=$COLORS (<=16)"
           done
 
-      # Décompresse Intro.vgz -> intro.vgm si présent
+      # Décompresse Intro.vgz -> intro.vgm (optionnel)
       - name: Decompress VGZ -> VGM
         shell: bash
         run: |
-          set -e
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
           SRC=$(ls "$RES_DIR" | grep -iE '^intro\.vgz$' || true)
-          if [ -z "$SRC" ]; then
-            echo "Info: intro.vgz introuvable (OK si intro.vgm existe déjà)."
-          else
-            echo "intro.vgz trouvé -> conversion en intro.vgm"
+          if [ -n "$SRC" ]; then
+            echo "Intro.vgz trouvé -> conversion en intro.vgm"
             gzip -dc "$RES_DIR/$SRC" > "$RES_DIR/intro.vgm"
             ls -lh "$RES_DIR/intro.vgm"
+          else
+            echo "Avertissement: intro.vgz absent (OK si intro.vgm existe déjà)"
           fi
 
       # Droits d’écriture pour l’UID 1000 du conteneur SGDK
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # Build SGDK dans Docker
+      # NEW — Vérif présence du fichier avant Docker
+      - name: Verify resources.res before build
+        shell: bash
+        run: |
+          ls -l "${{ steps.paths.outputs.res_dir }}/resources.res"
+          echo "--- HEAD ---"
+          head -n 20 "${{ steps.paths.outputs.res_dir }}/resources.res"
+
+      # Build SGDK dans Docker (on fixe le répertoire de travail PROJET)
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -119,16 +123,17 @@ jobs:
             -w /m68k/${{ steps.paths.outputs.project_dir }}
           run: |
             set -e
-            echo "PWD=$(pwd)"
+            echo "***"
             echo "Listing res/ depuis le conteneur:"
-            ls -la ./res || true
-            echo "Affichage du début de res/resources.res:"
-            head -n 20 ./res/resources.res || true
-
+            ls -l res || true
+            echo "***"
             mkdir -p src/boot out
             cp /sgdk/src/boot/sega.s src/boot/sega.s
             cp /sgdk/src/boot/rom_head.c src/boot/rom_head.c
-
+            # Test direct rescomp avant make (debug)
+            echo "Test direct rescomp:"
+            /usr/bin/java -jar /sgdk/bin/rescomp.jar res/resources.res res/resources.rs -dep out/res/resources.o || true
+            echo "*** Lance make ***"
             make -j1
             echo '=== out/ listing ==='
             ls -lh ./out || true
@@ -137,12 +142,11 @@ jobs:
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
-      # Prépare le nom de sortie (prend le 1er .bin trouvé)
+      # Prépare le nom de sortie
       - name: Prepare ROM filename
         id: name
         shell: bash
         run: |
-          set -e
           OUT_DIR="${{ steps.paths.outputs.out_dir }}"
           ROM=$(find "$OUT_DIR" -maxdepth 1 -type f -name '*.bin' | head -n1 || true)
           if [ -z "$ROM" ]; then
