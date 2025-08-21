@@ -9,18 +9,18 @@
 #define FPS                      60
 #define INTRO_FRAMES             (INTRO_SECONDS * FPS)
 
-// vitesse (actuelle)
+// vitesse scroll intro
 #define SCROLL_PIX_PER_STEP      1
 #define SCROLL_STEP_PERIOD       30
 
 #define TEXT_PAL                 PAL2
 #define TEXT_COLOR               0xFF0000   // ROUGE
-#define TEXT_BG                  0x000000   // noir
+#define TEXT_BG                  0x000000
 #define MAX_COLS                 40
 
 // lignes basses
-#define TEXT_FIRST_VISIBLE_ROW   27   // première ligne visible tout en bas
-#define PRESS_START_ROW          27   // "PRESS START" tout en bas
+#define TEXT_FIRST_VISIBLE_ROW   27
+#define PRESS_START_ROW          27
 
 // -----------------------------------------------------------------------------
 // Etat commun
@@ -37,7 +37,7 @@ static void resetScene(void)
 
     // texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
-    VDP_setTextPriority(0);          // on remettra à 1 pour l'écran titre
+    VDP_setTextPriority(0);
     VDP_setTextPalette(TEXT_PAL);
 
     VDP_clearPlane(BG_A, TRUE);
@@ -54,6 +54,21 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
         img,
         TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, nextTile),
         0, 0,
+        FALSE,
+        TRUE
+    );
+    nextTile += img->tileset->numTile;
+}
+
+// Image arbitraire en (xTile,yTile) avec palette/p priorité plan
+static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 xTile, u16 yTile, bool priority)
+{
+    PAL_setPalette(palIndex, img->palette->data, DMA);
+    VDP_drawImageEx(
+        plane,
+        img,
+        TILE_ATTR_FULL(palIndex, priority ? TRUE : FALSE, FALSE, FALSE, nextTile),
+        xTile, yTile,
         FALSE,
         TRUE
     );
@@ -112,7 +127,7 @@ static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 }
 
 // -----------------------------------------------------------------------------
-// Script complet, découpé en 3 segments (une image = un segment)
+// Script intro : 3 segments
 // -----------------------------------------------------------------------------
 
 // Segment 1 – La ville (intro1)
@@ -169,20 +184,15 @@ static const char* intro_seg3[] =
 };
 static const u16 INTRO_SEG3_COUNT = sizeof(intro_seg3)/sizeof(intro_seg3[0]);
 
-// -----------------------------------------------------------------------------
-// Util: applique le fond + rouge aux indices utiles de la palette texte
-// -----------------------------------------------------------------------------
+// Couleurs texte
 static inline void applyTextColors(void)
 {
-    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));     // fond
-    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));  // glyphes
-    PAL_setColor(TEXT_PAL * 16 + 15, RGB24_TO_VDPCOLOR(TEXT_COLOR)); // sécurité
+    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
+    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
+    PAL_setColor(TEXT_PAL * 16 + 15, RGB24_TO_VDPCOLOR(TEXT_COLOR));
 }
 
-// -----------------------------------------------------------------------------
-// Lecture d'un segment (image + bloc de texte) avec scroll
-// Retourne true si START est pressé (pour skipper toute l'intro)
-// -----------------------------------------------------------------------------
+// Un segment d’intro (image + texte scrollé)
 static bool runIntroSegment(const Image* img, const char* const* lines, u16 count, u16 frames)
 {
     resetScene();
@@ -192,7 +202,7 @@ static bool runIntroSegment(const Image* img, const char* const* lines, u16 coun
     // image
     drawFullImageOn(BG_B, img, PAL0);
 
-    // texte : première ligne en bas
+    // texte en bas
     const u16 yStart = TEXT_FIRST_VISIBLE_ROW;
     drawWrappedBlock(yStart, lines, count);
 
@@ -215,14 +225,10 @@ static bool runIntroSegment(const Image* img, const char* const* lines, u16 coun
     return false;
 }
 
-// -----------------------------------------------------------------------------
-// Intro (enchaîne les 3 segments)
-// -----------------------------------------------------------------------------
+// Enchaîne les 3 segments
 static void playIntro(void)
 {
-    // musique une seule fois
     XGM_startPlay(intro_music);
-
     const u16 segFrames = INTRO_FRAMES / 3;
 
     if (runIntroSegment(&intro1, intro_seg1, INTRO_SEG1_COUNT, segFrames)) return;
@@ -231,46 +237,45 @@ static void playIntro(void)
 }
 
 // -----------------------------------------------------------------------------
-// Titre (BG_B = ruelle ; sprites : Jimmy, Houcine, logo)
+// Ecran Titre (fond + compositing Jimmy/Houcine/Logo)
+// Placements auto:
+//  - logo: centré en haut (y=2 tiles)
+//  - jimmy: ancré à gauche (x=4 tiles), bas aligné sur la ligne 25
+//  - houcine: ancré à droite (x=40 - w - 4), bas aligné sur la ligne 25
 // -----------------------------------------------------------------------------
 static void showTitle(void)
 {
     resetScene();
 
-    // BG : fond ruelle (PAL0)
+    // 1) Fond (BG_B / PAL0)
     drawFullImageOn(BG_B, &title_bg, PAL0);
 
-    // Texte par-dessus tout
+    // 2) Avant-plan (BG_A) : sprites "images" avec priorite pour passer au-dessus du fond
+    //    On calcule en TUILES (40x28 à l'écran)
+    const u16 screenTilesW = 40;
+    const u16 bottomLine   = 25; // on laisse 2 lignes libres pour "PRESS START"
+
+    // LOGO centré
+    u16 x_logo = (screenTilesW - logo.w) / 2;
+    u16 y_logo = 2;
+
+    // JIMMY à gauche
+    u16 x_jimmy = 4;
+    u16 y_jimmy = (bottomLine >= jimmy.h) ? (bottomLine - jimmy.h) : 0;
+
+    // HOUCINE à droite
+    u16 x_houcine = (screenTilesW - houcine.w - 4);
+    u16 y_houcine = (bottomLine >= houcine.h) ? (bottomLine - houcine.h) : 0;
+
+    // Dessin (priorité = TRUE pour être au-dessus du BG)
+    drawImageAt(BG_A, &jimmy,   PAL1, x_jimmy,   y_jimmy,   TRUE);
+    drawImageAt(BG_A, &houcine, PAL2, x_houcine, y_houcine, TRUE);
+    drawImageAt(BG_A, &logo,    PAL3, x_logo,    y_logo,    TRUE);
+
+    // 3) Texte "PRESS START" par-dessus
     VDP_setTextPriority(1);
     applyTextColors();
     VDP_setVerticalScroll(BG_A, 0);
-
-    // --- SPRITES ---
-    // IMPORTANT: on charge explicitement les palettes des sprites
-    // (chaque res SPRITE a sa propre palette).
-    PAL_setPalette(PAL1, jimmy.palette->data, DMA);
-    PAL_setPalette(PAL2, houcine.palette->data, DMA);
-    PAL_setPalette(PAL3, logo.palette->data, DMA);
-
-    // Initialiser l’engine sprite (SGDK v2.11 : sans arguments)
-    SPR_init();
-
-    // Positions ajustées à partir de tes PNG actuels:
-    // (Chaque PNG fait 320x224 avec transparence autour.
-    //  On les superpose en x=0, puis on affine avec de petits offsets.)
-    s16 x_jimmy   = -6;   s16 y_jimmy   =  12;   // très léger décalage gauche & bas
-    s16 x_houcine =  6;   s16 y_houcine =  10;   // très léger décalage droite & bas
-    s16 x_logo    =  0;   s16 y_logo    =  -6;   // un chouïa plus haut
-
-    Sprite* sprJimmy   = SPR_addSprite(&jimmy,   x_jimmy,   y_jimmy,   TILE_ATTR(PAL1, 0, FALSE, FALSE));
-    Sprite* sprHoucine = SPR_addSprite(&houcine, x_houcine, y_houcine, TILE_ATTR(PAL2, 0, FALSE, FALSE));
-    Sprite* sprLogo    = SPR_addSprite(&logo,    x_logo,    y_logo,    TILE_ATTR(PAL3, 0, FALSE, FALSE));
-
-    // On s’assure que le logo passe au-dessus (ordre = priorités logiques)
-    // En pratique, l’engine respecte l’ordre d’ajout ; si besoin :
-    SPR_setDepth(sprJimmy,   3);  // derrière
-    SPR_setDepth(sprHoucine, 2);  // milieu
-    SPR_setDepth(sprLogo,    1);  // devant
 
     const char* pressStart = "PRESS START";
     u16 blink = 0;
@@ -286,22 +291,16 @@ static void showTitle(void)
             u16 len = strlen(pressStart);
             if (len > MAX_COLS) len = MAX_COLS;
             s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW); // tout en bas
+            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW);
         }
         else
         {
             VDP_clearTextArea(0, PRESS_START_ROW, MAX_COLS, 1);
         }
 
-        // Update sprites chaque frame
-        SPR_update();
-
         VDP_waitVSync();
         blink++;
     }
-
-    // Nettoyage sprites (libère VRAM liée aux sprites)
-    SPR_end();
 }
 
 // -----------------------------------------------------------------------------
