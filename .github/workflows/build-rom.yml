@@ -34,7 +34,7 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # Sanitize resources.res (CRLF -> LF, suppression BOM, translit ASCII)
+      # Sanitize resources.res (supprime BOM/CRLF/accents)
       - name: Sanitize resources.res
         shell: bash
         run: |
@@ -47,18 +47,14 @@ jobs:
             head -n 20 "$RES" || true
             echo "---- hexdump (64 bytes) ----"
             head -c 64 "$RES" | hexdump -C || true
-
-            sudo apt-get update
-            sudo apt-get install -y dos2unix
-
+            # CRLF -> LF
             dos2unix "$RES" >/dev/null 2>&1 || true
-            # retire BOM éventuel
+            # BOM -> none
             if [ "$(head -c 3 "$RES" | hexdump -v -e '/1 "%02X"')" = "EFBBBF" ]; then
               tail -c +4 "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             fi
-            # translit commentaires non-ASCII -> ASCII (sans casser la syntaxe)
+            # accents/commentaires -> ASCII
             iconv -f UTF-8 -t ASCII//TRANSLIT -c "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
-
             echo "=== AFTER sanitize ==="
             wc -c "$RES" || true
             file "$RES" || true
@@ -67,106 +63,49 @@ jobs:
             echo "::warning::${RES} introuvable"
           fi
 
-      # Prépare les PNG et IMPOSE une palette unique (celle de title_bg.PNG)
-            - name: Prepare PNGs for SGDK (16 couleurs, palette unique)
+      # Prépare les PNG (320x224, 16 couleurs) et REMAP vers la palette de title_bg.PNG
+      - name: Prepare PNGs for SGDK (16-color palette remap)
         shell: bash
         run: |
           set -euo pipefail
-          RES_DIR="${{ steps.paths.outputs.res_dir }}"
           sudo apt-get update
           sudo apt-get install -y imagemagick
 
-          # 1) Normalise toutes les images (320x224, 16 couleurs)
+          RES_DIR="${{ steps.paths.outputs.res_dir }}"
           shopt -s nullglob
+
+          # 1) Normalise d'abord title_bg.PNG (référence de palette)
+          if [ -f "$RES_DIR/title_bg.PNG" ]; then
+            echo "[Normalize] title_bg.PNG -> 320x224, PNG8 (16 cols)"
+            convert "$RES_DIR/title_bg.PNG" \
+              -resize 320x224\! \
+              -alpha off -background black -alpha remove \
+              -dither None -colors 16 -type palette \
+              PNG8:"$RES_DIR/title_bg.PNG"
+          else
+            echo "::error::title_bg.PNG manquant dans $RES_DIR"
+            exit 1
+          fi
+
+          # 2) Normalise puis remap tous les autres PNG vers la palette de title_bg.PNG
           for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
             [ -f "$img" ] || continue
-            echo "[Normalize] $(basename "$img") -> 320x224, 16 couleurs (PNG8)"
+            base=$(basename "$img")
+            if [ "$base" = "title_bg.PNG" ]; then
+              continue
+            fi
+            echo "[Normalize] $base -> 320x224, PNG8 (<=16 cols)"
             convert "$img" \
               -resize 320x224\! \
               -alpha off -background black -alpha remove \
               -dither None -colors 16 -type palette \
               PNG8:"$img"
-          done
 
-          # 2) Extrait la palette de title_bg en fichier (IM6-friendly)
-          if [ ! -f "$RES_DIR/title_bg.PNG" ]; then
-            echo "::error::title_bg.PNG manquant dans $RES_DIR"
-            exit 1
-          fi
-          echo "[Palette] Extraction palette depuis title_bg.PNG -> palette.png"
-          convert "$RES_DIR/title_bg.PNG" -alpha off -unique-colors -depth 8 PNG8:"$RES_DIR/palette.png"
+            echo "[Remap] $base -> palette de title_bg.PNG"
+            convert "$img" +dither -remap "$RES_DIR/title_bg.PNG" PNG8:"$img"
 
-          # 3) Remappe TOUTES les images sur la palette extraite
-          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-            [ -f "$img" ] || continue
-            echo "[Remap] $(basename "$img") -> palette de title_bg (palette.png)"
-            convert "$img" -remap "$RES_DIR/palette.png" PNG8:"$img"
-          done
-
-          # 4) Padding des overlays en multiples de 8 px (alignement tuiles)
-          pad_to_multiple_of_8 () {
-            local f="$1"
-            local w h W H
-            w=$(identify -format "%w" "$f")
-            h=$(identify -format "%h" "$f")
-            W=$(( ((w + 7) / 8) * 8 ))
-            H=$(( ((h + 7) / 8) * 8 ))
-            if [ "$W" -ne "$w" ] || [ "$H" -ne "$h" ]; then
-              echo "[Pad] $(basename "$f") : ${w}x${h} -> ${W}x${H}"
-              convert "$f" -background black -gravity northwest -extent "${W}x${H}" PNG8:"$f"
-              # Remap encore une fois pour garantir la palette
-              convert "$f" -remap "$RES_DIR/palette.png" PNG8:"$f"
-            fi
-          }
-          for f in "$RES_DIR"/jimmy.PNG "$RES_DIR"/houcine.PNG "$RES_DIR"/logo.PNG; do
-            [ -f "$f" ] && pad_to_multiple_of_8 "$f"
-          done
-
-          echo "=== Vérif finale (tailles & nb couleurs) ==="
-          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-            [ -f "$img" ] || continue
-            identify -format "%f : %wx%h, %k colors\n" "$img"
-          done
-
-          # 2) Extrait la palette de title_bg pour servir de CLUT commune
-          if [ ! -f "$RES_DIR/title_bg.PNG" ]; then
-            echo "::error::title_bg.PNG manquant dans $RES_DIR"
-            exit 1
-          fi
-          echo "[Palette] Extraction palette depuis title_bg.PNG"
-          convert "$RES_DIR/title_bg.PNG" -unique-colors -write mpr:pal +delete null:
-
-          # 3) Remappe TOUTES les images sur la palette extraite (y compris le fond)
-          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-            [ -f "$img" ] || continue
-            echo "[Remap] $(basename "$img") -> palette de title_bg"
-            convert "$img" -remap mpr:pal PNG8:"$img"
-          done
-
-          # 4) Padding des overlays en multiples de 8 px (alignement tuiles)
-          pad_to_multiple_of_8 () {
-            local f="$1"
-            local w h W H
-            w=$(identify -format "%w" "$f")
-            h=$(identify -format "%h" "$f")
-            W=$(( ((w + 7) / 8) * 8 ))
-            H=$(( ((h + 7) / 8) * 8 ))
-            if [ "$W" -ne "$w" ] || [ "$H" -ne "$h" ]; then
-              echo "[Pad] $(basename "$f") : ${w}x${h} -> ${W}x${H}"
-              convert "$f" -background black -gravity northwest -extent "${W}x${H}" PNG8:"$f"
-              # Remap encore une fois (au cas où l'extent aurait ajouté du noir hors palette)
-              convert "$f" -remap mpr:pal PNG8:"$f"
-            fi
-          }
-
-          for f in "$RES_DIR"/jimmy.PNG "$RES_DIR"/houcine.PNG "$RES_DIR"/logo.PNG; do
-            [ -f "$f" ] && pad_to_multiple_of_8 "$f"
-          done
-
-          echo "=== Vérif finale (tailles & nb couleurs) ==="
-          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-            [ -f "$img" ] || continue
-            identify -format "%f : %wx%h, %k colors\n" "$img"
+            COLORS=$(identify -format "%k" "$img" || echo "?")
+            echo " -> colors=$COLORS (<=16)"
           done
 
       # Décompresse Intro.vgz -> intro.vgm (optionnel)
@@ -191,11 +130,11 @@ jobs:
       - name: Verify resources.res before build
         shell: bash
         run: |
-          ls -l "${{ steps.paths.outputs.res_dir }}/resources.res"
+          ls -l "${{ steps.paths.outputs.res_dir }}/resources.res" || exit 1
           echo "--- HEAD ---"
           head -n 20 "${{ steps.paths.outputs.res_dir }}/resources.res"
 
-      # Build SGDK dans Docker (répertoire de travail = projet)
+      # Build SGDK dans Docker
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -215,7 +154,7 @@ jobs:
             mkdir -p src/boot out
             cp /sgdk/src/boot/sega.s src/boot/sega.s
             cp /sgdk/src/boot/rom_head.c src/boot/rom_head.c
-            # Test direct rescomp avant make (debug)
+            # Test rescomp (debug)
             echo "Test direct rescomp:"
             /usr/bin/java -jar /sgdk/bin/rescomp.jar res/resources.res res/resources.rs -dep out/res/resources.o || true
             echo "*** Lance make ***"
@@ -234,7 +173,7 @@ jobs:
         run: |
           OUT_DIR="${{ steps.paths.outputs.out_dir }}"
           ROM=$(find "$OUT_DIR" -maxdepth 1 -type f -name '*.bin' | head -n1 || true)
-          if [ -z "$ROM" ] ; then
+          if [ -z "$ROM" ]; then
             echo "ERREUR: Aucun .bin trouvé dans $OUT_DIR"
             ls -la "$OUT_DIR" || true
             exit 1
