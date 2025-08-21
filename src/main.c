@@ -9,26 +9,17 @@
 #define FPS                      60
 #define INTRO_FRAMES             (INTRO_SECONDS * FPS)
 
-// Scroll intro (inchangé)
+// Scroll intro
 #define SCROLL_PIX_PER_STEP      1
 #define SCROLL_STEP_PERIOD       30
 
-// Texte ROUGE
-#define TEXT_PAL                 PAL3          // <-- texte sur la même banque que le logo
-#define TEXT_COLOR               0xFF0000
-#define TEXT_BG                  0x000000
+// Texte
+#define TEXT_PAL                 PAL2
+#define TEXT_COLOR               0xFF0000   // rouge
+#define TEXT_BG                  0x000000   // fond noir
 #define MAX_COLS                 40
-
-// lignes basses
-#define TEXT_FIRST_VISIBLE_ROW   27
-#define PRESS_START_ROW          27
-
-// ---------------------- Titre : placements (en tuiles 8x8) -------------------
-#define JIMMY_X   4
-#define JIMMY_Y   9
-#define HOUCINE_X 24
-#define HOUCINE_Y 9
-#define LOGO_Y    2
+#define TEXT_FIRST_VISIBLE_ROW   27         // première ligne visible en bas
+#define PRESS_START_ROW          27         // "PRESS START" tout en bas
 
 // -----------------------------------------------------------------------------
 // Etat commun
@@ -43,6 +34,7 @@ static void resetScene(void)
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
+    // texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
     VDP_setTextPriority(0);
     VDP_setTextPalette(TEXT_PAL);
@@ -53,37 +45,21 @@ static void resetScene(void)
     nextTile = TILE_USER_INDEX;
 }
 
-static void applyTextColors(void)
-{
-    // Assure fond noir et lettres rouges pour la police SGDK
-    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));     // transparence
-    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));  // couleur texte
-    PAL_setColor(TEXT_PAL * 16 + 15, RGB24_TO_VDPCOLOR(TEXT_COLOR)); // parfois utilisé
-}
-
-// Dessine une image n'importe où (coordonnées en tuiles)
-static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 x, u16 y)
+static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
 {
     PAL_setPalette(palIndex, img->palette->data, DMA);
     VDP_drawImageEx(
         plane,
         img,
         TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, nextTile),
-        x, y,
+        0, 0,
         FALSE,
         TRUE
     );
     nextTile += img->tileset->numTile;
 }
 
-// Largeur en tuiles (pour centrer)
-static u16 imageWidthTiles(const Image* img)
-{
-    // tilemap->w est la largeur en tuiles dans SGDK
-    return img->tilemap->w;
-}
-
-// Tronque/centre ≤ 40 colonnes
+// Texte
 static void drawCenteredLine(u16 y, const char* s)
 {
     char buf[MAX_COLS + 1];
@@ -97,7 +73,6 @@ static void drawCenteredLine(u16 y, const char* s)
     VDP_drawText(buf, (u16)x, y);
 }
 
-// Wrap simple sur MAX_COLS
 static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 {
     char out[MAX_COLS + 1];
@@ -135,7 +110,7 @@ static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 }
 
 // -----------------------------------------------------------------------------
-// Script en 3 segments
+// Script d'intro (3 segments)
 // -----------------------------------------------------------------------------
 static const char* intro_seg1[] =
 {
@@ -188,8 +163,15 @@ static const char* intro_seg3[] =
 };
 static const u16 INTRO_SEG3_COUNT = sizeof(intro_seg3)/sizeof(intro_seg3[0]);
 
+static inline void applyTextColors(void)
+{
+    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));
+    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));
+    PAL_setColor(TEXT_PAL * 16 + 15, RGB24_TO_VDPCOLOR(TEXT_COLOR));
+}
+
 // -----------------------------------------------------------------------------
-// Segment d'intro
+// Lecture d'un segment
 // -----------------------------------------------------------------------------
 static bool runIntroSegment(const Image* img, const char* const* lines, u16 count, u16 frames)
 {
@@ -197,10 +179,10 @@ static bool runIntroSegment(const Image* img, const char* const* lines, u16 coun
 
     applyTextColors();
 
-    // fond segment (image plein ecran) sur PAL0
-    drawImageAt(BG_B, img, PAL0, 0, 0);
+    // image de fond du segment
+    drawFullImageOn(BG_B, img, PAL0);
 
-    // texte : première ligne en bas
+    // texte : première ligne placée en bas
     const u16 yStart = TEXT_FIRST_VISIBLE_ROW;
     drawWrappedBlock(yStart, lines, count);
 
@@ -215,18 +197,21 @@ static bool runIntroSegment(const Image* img, const char* const* lines, u16 coun
             vscroll += SCROLL_PIX_PER_STEP;
             VDP_setVerticalScroll(BG_A, vscroll);
         }
+
         if (JOY_readJoypad(JOY_1) & BUTTON_START) return true;
+
         SYS_doVBlankProcess();
     }
     return false;
 }
 
 // -----------------------------------------------------------------------------
-// Intro
+// Intro (enchaîne les 3 segments)
 // -----------------------------------------------------------------------------
 static void playIntro(void)
 {
     XGM_startPlay(intro_music);
+
     const u16 segFrames = INTRO_FRAMES / 3;
 
     if (runIntroSegment(&intro1, intro_seg1, INTRO_SEG1_COUNT, segFrames)) return;
@@ -235,28 +220,45 @@ static void playIntro(void)
 }
 
 // -----------------------------------------------------------------------------
-// Ecran titre composite (4 palettes distinctes)
+// Titre (fond = IMAGE, logo+persos = SPRITES)
 // -----------------------------------------------------------------------------
 static void showTitle(void)
 {
     resetScene();
 
-    // 1) Fond dans PAL0 sur BG_B (derriere tout)
-    drawImageAt(BG_B, &title_bg, PAL0, 0, 0);
+    // 1) Fond plein écran (PAL0)
+    drawFullImageOn(BG_B, &title_bg, PAL0);
 
-    // 2) Personnages et logo sur BG_A (par-dessus) avec leurs palettes dédiées
-    drawImageAt(BG_A, &jimmy,   PAL1, JIMMY_X,   JIMMY_Y);
-    drawImageAt(BG_A, &houcine, PAL2, HOUCINE_X, HOUCINE_Y);
+    // 2) Système sprite
+    SPR_init(0, 0, 0);
 
-    // Centrage horizontal du logo
-    u16 wLogo = imageWidthTiles(&logo);
-    s16 logoX = (40 - (s16)wLogo) / 2;
-    if (logoX < 0) logoX = 0;
-    drawImageAt(BG_A, &logo, PAL3, (u16)logoX, LOGO_Y);
+    // 3) Palettes sprites
+    // Chaque PNG a <=16 couleurs -> on isole par palette pour éviter les conflits
+    PAL_setPalette(PAL1, jimmy.palette->data, DMA);
+    PAL_setPalette(PAL2, houcine.palette->data, DMA);
+    PAL_setPalette(PAL3, logo.palette->data, DMA);
 
-    // 3) Texte "PRESS START" au-dessus
-    VDP_setTextPriority(1);       // texte au-dessus des images BG_A/B
-    VDP_setTextPalette(TEXT_PAL); // même banque que le logo
+    // 4) Ajout des sprites (+ positions choisies pour tes images actuelles)
+    //    - Jimmy à gauche, légèrement en bas
+    //    - Houcine à droite
+    //    - Logo centré en haut
+    // NOTE: adapte si besoin, mais ces valeurs cadrent bien en 320x224.
+    const s16 x_jimmy   =  16;
+    const s16 y_jimmy   =  84;
+
+    const s16 x_houcine = 188;
+    const s16 y_houcine =  76;
+
+    // Centrage simple du logo en supposant ~256 px de large ; ajuste si besoin
+    const s16 x_logo    =  (320 - 256) / 2;  // ~32
+    const s16 y_logo    =  12;
+
+    Sprite* sprJimmy   = SPR_addSprite(&jimmy,   x_jimmy,   y_jimmy,   TILE_ATTR(PAL1, 0, FALSE, FALSE));
+    Sprite* sprHoucine = SPR_addSprite(&houcine, x_houcine, y_houcine, TILE_ATTR(PAL2, 0, FALSE, FALSE));
+    Sprite* sprLogo    = SPR_addSprite(&logo,    x_logo,    y_logo,    TILE_ATTR(PAL3, 0, FALSE, FALSE));
+
+    // 5) Texte "PRESS START" par-dessus (BG_A)
+    VDP_setTextPriority(1);
     applyTextColors();
     VDP_setVerticalScroll(BG_A, 0);
 
@@ -268,6 +270,7 @@ static void showTitle(void)
         u16 j = JOY_readJoypad(JOY_1);
         if (j & BUTTON_START) break;
 
+        // Blink
         bool on = ((blink / 30) % 2) == 0;
         if (on)
         {
@@ -281,9 +284,18 @@ static void showTitle(void)
             VDP_clearTextArea(0, PRESS_START_ROW, MAX_COLS, 1);
         }
 
+        // Update sprites (obligatoire à chaque frame)
+        SPR_update();
+
         VDP_waitVSync();
         blink++;
     }
+
+    // Optionnel : nettoyer les sprites
+    SPR_releaseSprite(sprJimmy);
+    SPR_releaseSprite(sprHoucine);
+    SPR_releaseSprite(sprLogo);
+    SPR_end();
 }
 
 // -----------------------------------------------------------------------------
