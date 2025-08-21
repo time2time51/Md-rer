@@ -34,11 +34,13 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # NEW — Sanitize resources.res (supprime BOM, accents et CRLF)
+      # Sanitize resources.res (supprime BOM, accents et CRLF)
       - name: Sanitize resources.res
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y dos2unix
           RES="${{ steps.paths.outputs.res_dir }}/resources.res"
           if [ -f "$RES" ]; then
             echo "=== BEFORE sanitize ==="
@@ -53,8 +55,7 @@ jobs:
             if [ "$(head -c 3 "$RES" | hexdump -v -e '/1 "%02X"')" = "EFBBBF" ]; then
               tail -c +4 "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             fi
-            # enlève les caractères non ASCII (dans les COMMENTAIRES uniquement)
-            # => on remplace les caractères 0x80-0xFF par leur version "translit" quand possible
+            # enlève les caractères non ASCII (dans les commentaires)
             iconv -f UTF-8 -t ASCII//TRANSLIT -c "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             echo "=== AFTER sanitize ==="
             wc -c "$RES" || true
@@ -64,22 +65,47 @@ jobs:
             echo "::warning::${RES} introuvable"
           fi
 
-      # Prépare les PNG (320x224, 16 couleurs)
-      - name: Prepare PNGs for SGDK (indexed 16 colors)
+      # Prépare les PNG : fonds plein écran (resize 320x224 + 16c), overlays (16c, pas de resize, padding /8)
+      - name: Prepare PNGs for SGDK (FS resize, overlays padded)
         shell: bash
         run: |
+          set -e
           sudo apt-get update
           sudo apt-get install -y imagemagick
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
           shopt -s nullglob
-          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
+
+          echo "=== Fullscreen images (resize 320x224 + 16 colors) ==="
+          for img in "$RES_DIR"/intro1.PNG "$RES_DIR"/intro2.PNG "$RES_DIR"/intro3.PNG "$RES_DIR"/title_bg.PNG; do
             [ -f "$img" ] || continue
-            echo "Quantizing to 16 colors -> $(basename "$img")"
+            echo "[FS] -> $(basename "$img")"
             convert "$img" \
               -resize 320x224\! \
               -alpha off -background black -alpha remove \
               -dither None -colors 16 -type palette \
               PNG8:"$img"
+            COLORS=$(identify -format "%k" "$img" || echo "?")
+            echo " -> colors=$COLORS (<=16)"
+          done
+
+          echo "=== Overlay images (NO resize, 16 colors, pad to /8) ==="
+          for img in "$RES_DIR"/jimmy.PNG "$RES_DIR"/houcine.PNG "$RES_DIR"/logo.PNG; do
+            [ -f "$img" ] || continue
+            echo "[OL] -> $(basename "$img")"
+            # palette 16c en conservant l'alpha
+            convert "$img" \
+              -alpha set -background none -alpha on \
+              -dither None -colors 16 -type palette \
+              PNG8:"$img"
+
+            # padding transparent pour dimensions multiples de 8
+            W=$(identify -format "%w" "$img"); H=$(identify -format "%h" "$img")
+            NEW_W=$(( ((W + 7) / 8) * 8 ))
+            NEW_H=$(( ((H + 7) / 8) * 8 ))
+            if [ $NEW_W -ne $W ] || [ $NEW_H -ne $H ]; then
+              echo " -> padding to ${NEW_W}x${NEW_H}"
+              convert "$img" -background none -gravity northwest -extent ${NEW_W}x${NEW_H} PNG8:"$img"
+            fi
             COLORS=$(identify -format "%k" "$img" || echo "?")
             echo " -> colors=$COLORS (<=16)"
           done
@@ -102,7 +128,7 @@ jobs:
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # NEW — Vérif présence du fichier avant Docker
+      # Vérif présence du fichier avant Docker
       - name: Verify resources.res before build
         shell: bash
         run: |
@@ -110,7 +136,7 @@ jobs:
           echo "--- HEAD ---"
           head -n 20 "${{ steps.paths.outputs.res_dir }}/resources.res"
 
-      # Build SGDK dans Docker (on fixe le répertoire de travail PROJET)
+      # Build SGDK dans Docker
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -130,7 +156,6 @@ jobs:
             mkdir -p src/boot out
             cp /sgdk/src/boot/sega.s src/boot/sega.s
             cp /sgdk/src/boot/rom_head.c src/boot/rom_head.c
-            # Test direct rescomp avant make (debug)
             echo "Test direct rescomp:"
             /usr/bin/java -jar /sgdk/bin/rescomp.jar res/resources.res res/resources.rs -dep out/res/resources.o || true
             echo "*** Lance make ***"
@@ -166,7 +191,7 @@ jobs:
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
           ls -la "$OUT"
 
-      # Upload artifact (v4)
+      # Upload artifact
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
