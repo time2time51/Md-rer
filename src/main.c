@@ -9,20 +9,26 @@
 #define FPS                      60
 #define INTRO_FRAMES             (INTRO_SECONDS * FPS)
 
-// vitesse (actuelle)
+// Scroll intro (inchangé)
 #define SCROLL_PIX_PER_STEP      1
 #define SCROLL_STEP_PERIOD       30
 
-// IMPORTANT: on réserve PAL3 pour le TEXTE (et aussi pour le LOGO).
-// On ne modifie que les entrées 0/1/15 de PAL3 pour ne pas détruire les couleurs du logo.
-#define TEXT_PAL                 PAL3
-#define TEXT_COLOR               0xFF0000   // ROUGE vif
-#define TEXT_BG                  0x000000   // noir
+// Texte ROUGE
+#define TEXT_PAL                 PAL3          // <-- texte sur la même banque que le logo
+#define TEXT_COLOR               0xFF0000
+#define TEXT_BG                  0x000000
 #define MAX_COLS                 40
 
 // lignes basses
-#define TEXT_FIRST_VISIBLE_ROW   27   // première ligne visible tout en bas
-#define PRESS_START_ROW          27   // "PRESS START" tout en bas
+#define TEXT_FIRST_VISIBLE_ROW   27
+#define PRESS_START_ROW          27
+
+// ---------------------- Titre : placements (en tuiles 8x8) -------------------
+#define JIMMY_X   4
+#define JIMMY_Y   9
+#define HOUCINE_X 24
+#define HOUCINE_Y 9
+#define LOGO_Y    2
 
 // -----------------------------------------------------------------------------
 // Etat commun
@@ -30,16 +36,15 @@
 static u16 nextTile;
 
 // -----------------------------------------------------------------------------
-// Utilitaires de base
+// Utilitaires
 // -----------------------------------------------------------------------------
 static void resetScene(void)
 {
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
-    // texte sur BG_A
     VDP_setTextPlane(BG_A);
-    VDP_setTextPriority(0);          // on passera à 1 pour l'écran titre
+    VDP_setTextPriority(0);
     VDP_setTextPalette(TEXT_PAL);
 
     VDP_clearPlane(BG_A, TRUE);
@@ -48,26 +53,34 @@ static void resetScene(void)
     nextTile = TILE_USER_INDEX;
 }
 
-static void drawImageAtTiles(VDPPlane plane, const Image* img, u16 palIndex, u16 tx, u16 ty)
+static void applyTextColors(void)
 {
-    // on charge la palette dédiée (si différente, la suivante l’écrasera si on réutilise le même palIndex)
-    PAL_setPalette(palIndex, img->palette->data, DMA);
+    // Assure fond noir et lettres rouges pour la police SGDK
+    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));     // transparence
+    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR));  // couleur texte
+    PAL_setColor(TEXT_PAL * 16 + 15, RGB24_TO_VDPCOLOR(TEXT_COLOR)); // parfois utilisé
+}
 
-    // dessine avec attributs (palette + index de tuile)
+// Dessine une image n'importe où (coordonnées en tuiles)
+static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 x, u16 y)
+{
+    PAL_setPalette(palIndex, img->palette->data, DMA);
     VDP_drawImageEx(
         plane,
         img,
         TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, nextTile),
-        tx, ty,
-        FALSE,      // NO loadpal (on gère nous-mêmes)
-        TRUE        // DMA
+        x, y,
+        FALSE,
+        TRUE
     );
     nextTile += img->tileset->numTile;
 }
 
-static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
+// Largeur en tuiles (pour centrer)
+static u16 imageWidthTiles(const Image* img)
 {
-    drawImageAtTiles(plane, img, palIndex, 0, 0);
+    // tilemap->w est la largeur en tuiles dans SGDK
+    return img->tilemap->w;
 }
 
 // Tronque/centre ≤ 40 colonnes
@@ -84,7 +97,7 @@ static void drawCenteredLine(u16 y, const char* s)
     VDP_drawText(buf, (u16)x, y);
 }
 
-// Wrap simple sur MAX_COLS, écrit ligne par ligne
+// Wrap simple sur MAX_COLS
 static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 {
     char out[MAX_COLS + 1];
@@ -122,10 +135,8 @@ static u16 drawWrappedBlock(u16 yStart, const char* const* lines, u16 count)
 }
 
 // -----------------------------------------------------------------------------
-// Script découpé en 3 segments (une image = un segment)
+// Script en 3 segments
 // -----------------------------------------------------------------------------
-
-// Segment 1 – La ville (intro1)
 static const char* intro_seg1[] =
 {
     "Reims, la nuit. La ville suffoque.",
@@ -139,7 +150,6 @@ static const char* intro_seg1[] =
 };
 static const u16 INTRO_SEG1_COUNT = sizeof(intro_seg1)/sizeof(intro_seg1[0]);
 
-// Segment 2 – Jimmy + Houcine (intro2)
 static const char* intro_seg2[] =
 {
     "Jimmy, 35 ans.",
@@ -157,7 +167,6 @@ static const char* intro_seg2[] =
 };
 static const u16 INTRO_SEG2_COUNT = sizeof(intro_seg2)/sizeof(intro_seg2[0]);
 
-// Segment 3 – Leur passe + La vengeance (intro3)
 static const char* intro_seg3[] =
 {
     "Ensemble, ils ont connu la haine.",
@@ -180,18 +189,7 @@ static const char* intro_seg3[] =
 static const u16 INTRO_SEG3_COUNT = sizeof(intro_seg3)/sizeof(intro_seg3[0]);
 
 // -----------------------------------------------------------------------------
-// Couleurs texte: on ne touche qu'aux entrées 0/1/15 du TEXT_PAL (PAL3)
-// -----------------------------------------------------------------------------
-static inline void applyTextColors(void)
-{
-    PAL_setColor(TEXT_PAL * 16 + 0, RGB24_TO_VDPCOLOR(TEXT_BG));    // fond (transparent pour la fonte)
-    PAL_setColor(TEXT_PAL * 16 + 1, RGB24_TO_VDPCOLOR(TEXT_COLOR)); // texte
-    PAL_setColor(TEXT_PAL * 16 + 15, RGB24_TO_VDPCOLOR(TEXT_COLOR));// variante utilisée par la fonte SGDK
-}
-
-// -----------------------------------------------------------------------------
-// Lecture d'un segment (image + bloc de texte) avec scroll
-// Retourne true si START est pressé (pour skipper toute l'intro)
+// Segment d'intro
 // -----------------------------------------------------------------------------
 static bool runIntroSegment(const Image* img, const char* const* lines, u16 count, u16 frames)
 {
@@ -199,8 +197,8 @@ static bool runIntroSegment(const Image* img, const char* const* lines, u16 coun
 
     applyTextColors();
 
-    // image
-    drawFullImageOn(BG_B, img, PAL0); // intro en PAL0
+    // fond segment (image plein ecran) sur PAL0
+    drawImageAt(BG_B, img, PAL0, 0, 0);
 
     // texte : première ligne en bas
     const u16 yStart = TEXT_FIRST_VISIBLE_ROW;
@@ -217,22 +215,18 @@ static bool runIntroSegment(const Image* img, const char* const* lines, u16 coun
             vscroll += SCROLL_PIX_PER_STEP;
             VDP_setVerticalScroll(BG_A, vscroll);
         }
-
         if (JOY_readJoypad(JOY_1) & BUTTON_START) return true;
-
         SYS_doVBlankProcess();
     }
     return false;
 }
 
 // -----------------------------------------------------------------------------
-// Intro (enchaîne les 3 segments)
+// Intro
 // -----------------------------------------------------------------------------
 static void playIntro(void)
 {
-    // musique une seule fois
     XGM_startPlay(intro_music);
-
     const u16 segFrames = INTRO_FRAMES / 3;
 
     if (runIntroSegment(&intro1, intro_seg1, INTRO_SEG1_COUNT, segFrames)) return;
@@ -241,44 +235,28 @@ static void playIntro(void)
 }
 
 // -----------------------------------------------------------------------------
-// Titre (BG composite: title_bg + jimmy + houcine + logo) + PRESS START rouge
+// Ecran titre composite (4 palettes distinctes)
 // -----------------------------------------------------------------------------
-// Calage générique: calcule x centré en tuiles pour une Image
-static u16 centeredXInTiles(const Image* img)
-{
-    // Largeur plane = 40 tuiles. Largeur image en tuiles = img->tilemap->w
-    u16 w = img->tilemap->w;
-    s16 x = (40 - (s16)w) / 2;
-    return (x < 0) ? 0 : (u16)x;
-}
-
 static void showTitle(void)
 {
     resetScene();
 
-    // --- Palettes / plan ---
-    // PAL0 : background (title_bg)
-    // PAL1 : jimmy
-    // PAL2 : houcine
-    // PAL3 : logo (+ texte, en modifiant uniquement 0/1/15)
-    drawFullImageOn(BG_B, &title_bg, PAL0);
+    // 1) Fond dans PAL0 sur BG_B (derriere tout)
+    drawImageAt(BG_B, &title_bg, PAL0, 0, 0);
 
-    // Dessus du BG : on colle les layers en BG_B aussi
-    // Jimmy à gauche (x=3), aligné plutôt bas (y=12)
-    drawImageAtTiles(BG_B, &jimmy, PAL1, 3, 12);
+    // 2) Personnages et logo sur BG_A (par-dessus) avec leurs palettes dédiées
+    drawImageAt(BG_A, &jimmy,   PAL1, JIMMY_X,   JIMMY_Y);
+    drawImageAt(BG_A, &houcine, PAL2, HOUCINE_X, HOUCINE_Y);
 
-    // Houcine à droite, y aligné avec Jimmy, x = bord droit - marge - largeur
-    u16 hou_w = houcine.tilemap->w;
-    u16 hou_x = (40 >= (3 + hou_w)) ? (40 - 3 - hou_w) : 0;
-    drawImageAtTiles(BG_B, &houcine, PAL2, hou_x, 12);
+    // Centrage horizontal du logo
+    u16 wLogo = imageWidthTiles(&logo);
+    s16 logoX = (40 - (s16)wLogo) / 2;
+    if (logoX < 0) logoX = 0;
+    drawImageAt(BG_A, &logo, PAL3, (u16)logoX, LOGO_Y);
 
-    // Logo centré en haut (y=2)
-    u16 logo_x = centeredXInTiles(&logo);
-    drawImageAtTiles(BG_B, &logo, PAL3, logo_x, 2);
-
-    // Texte au-dessus (BG_A), priorité 1 pour passer devant BG_B
-    VDP_setTextPriority(1);
-    VDP_setTextPalette(TEXT_PAL);
+    // 3) Texte "PRESS START" au-dessus
+    VDP_setTextPriority(1);       // texte au-dessus des images BG_A/B
+    VDP_setTextPalette(TEXT_PAL); // même banque que le logo
     applyTextColors();
     VDP_setVerticalScroll(BG_A, 0);
 
@@ -290,13 +268,13 @@ static void showTitle(void)
         u16 j = JOY_readJoypad(JOY_1);
         if (j & BUTTON_START) break;
 
-        bool on = ((blink / 30) % 2) == 0; // ~0,5 s
+        bool on = ((blink / 30) % 2) == 0;
         if (on)
         {
             u16 len = strlen(pressStart);
             if (len > MAX_COLS) len = MAX_COLS;
             s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW); // tout en bas
+            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW);
         }
         else
         {
