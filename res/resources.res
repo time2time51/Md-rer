@@ -1,13 +1,16 @@
-# --- INTRO (3 fonds plein écran) ---
-IMAGE intro1 "intro1.PNG" 0
-IMAGE intro2 "intro2.PNG" 0
-IMAGE intro3 "intro3.PNG" 0
+# === Fichier resources.res corrigé ===
+# Tous les PNG utilisent la même palette (PAL0)
 
-# --- ÉCRAN TITRE ---
-IMAGE title_bg "title_bg.PNG" 0
-IMAGE jimmy    "jimmy.PNG"    0
-IMAGE houcine  "houcine.PNG"  0
-IMAGE logo     "logo.PNG"     0
+PALETTE PAL0 "title_bg.PNG"
 
-# --- MUSIQUE ---
-XGM intro_music "intro.vgm"
+IMAGE title_bg "title_bg.PNG" PAL0
+IMAGE logo     "logo.PNG"     PAL0
+IMAGE jimmy    "jimmy.PNG"    PAL0
+IMAGE houcine  "houcine.PNG"  PAL0
+
+IMAGE intro1   "intro1.PNG"   PAL0
+IMAGE intro2   "intro2.PNG"   PAL0
+IMAGE intro3   "intro3.PNG"   PAL0
+
+# Exemple musique (si besoin, à activer/décommenter si fichier dispo)
+# XGM intro "intro.vgm"
