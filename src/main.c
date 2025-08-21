@@ -60,7 +60,7 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
     nextTile += img->tileset->numTile;
 }
 
-// Image arbitraire en (xTile,yTile) avec palette/p priorité plan
+// Image arbitraire en (xTile,yTile) avec palette / priorité plan
 static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 xTile, u16 yTile, bool priority)
 {
     PAL_setPalette(palIndex, img->palette->data, DMA);
@@ -240,8 +240,8 @@ static void playIntro(void)
 // Ecran Titre (fond + compositing Jimmy/Houcine/Logo)
 // Placements auto:
 //  - logo: centré en haut (y=2 tiles)
-//  - jimmy: ancré à gauche (x=4 tiles), bas aligné sur la ligne 25
-//  - houcine: ancré à droite (x=40 - w - 4), bas aligné sur la ligne 25
+//  - jimmy: à gauche (x=4), bas aligné ligne 25
+//  - houcine: à droite (x=40 - w - 4), bas aligné ligne 25
 // -----------------------------------------------------------------------------
 static void showTitle(void)
 {
@@ -250,22 +250,29 @@ static void showTitle(void)
     // 1) Fond (BG_B / PAL0)
     drawFullImageOn(BG_B, &title_bg, PAL0);
 
-    // 2) Avant-plan (BG_A) : sprites "images" avec priorite pour passer au-dessus du fond
-    //    On calcule en TUILES (40x28 à l'écran)
+    // 2) Avant-plan (BG_A)
     const u16 screenTilesW = 40;
-    const u16 bottomLine   = 25; // on laisse 2 lignes libres pour "PRESS START"
+    const u16 bottomLine   = 25; // laisse 2 lignes pour "PRESS START"
+
+    // Récup tailles en tuiles (SGDK: via tilemap->w/h)
+    const u16 logoW    = logo.tilemap->w;
+    const u16 logoH    = logo.tilemap->h;   (void)logoH; // pas utilisé mais utile à garder si on ajuste
+    const u16 jimmyW   = jimmy.tilemap->w;
+    const u16 jimmyH   = jimmy.tilemap->h;
+    const u16 houcineW = houcine.tilemap->w;
+    const u16 houcineH = houcine.tilemap->h;
 
     // LOGO centré
-    u16 x_logo = (screenTilesW - logo.w) / 2;
+    u16 x_logo = (screenTilesW - logoW) / 2;
     u16 y_logo = 2;
 
     // JIMMY à gauche
     u16 x_jimmy = 4;
-    u16 y_jimmy = (bottomLine >= jimmy.h) ? (bottomLine - jimmy.h) : 0;
+    u16 y_jimmy = (bottomLine >= jimmyH) ? (bottomLine - jimmyH) : 0;
 
     // HOUCINE à droite
-    u16 x_houcine = (screenTilesW - houcine.w - 4);
-    u16 y_houcine = (bottomLine >= houcine.h) ? (bottomLine - houcine.h) : 0;
+    u16 x_houcine = (screenTilesW - houcineW - 4);
+    u16 y_houcine = (bottomLine >= houcineH) ? (bottomLine - houcineH) : 0;
 
     // Dessin (priorité = TRUE pour être au-dessus du BG)
     drawImageAt(BG_A, &jimmy,   PAL1, x_jimmy,   y_jimmy,   TRUE);
