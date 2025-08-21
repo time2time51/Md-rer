@@ -226,38 +226,26 @@ static void showTitle(void)
 {
     resetScene();
 
-    // 1) Fond plein écran (PAL0)
+    // 1) Fond
     drawFullImageOn(BG_B, &title_bg, PAL0);
 
-    // 2) Système sprite
-    SPR_init(0, 0, 0);
+    // 2) Sprites — SGDK v1.9+ : pas de paramètres
+    SPR_init();
 
-    // 3) Palettes sprites
-    // Chaque PNG a <=16 couleurs -> on isole par palette pour éviter les conflits
+    // 3) Palettes des sprites
     PAL_setPalette(PAL1, jimmy.palette->data, DMA);
     PAL_setPalette(PAL2, houcine.palette->data, DMA);
     PAL_setPalette(PAL3, logo.palette->data, DMA);
 
-    // 4) Ajout des sprites (+ positions choisies pour tes images actuelles)
-    //    - Jimmy à gauche, légèrement en bas
-    //    - Houcine à droite
-    //    - Logo centré en haut
-    // NOTE: adapte si besoin, mais ces valeurs cadrent bien en 320x224.
-    const s16 x_jimmy   =  16;
-    const s16 y_jimmy   =  84;
-
-    const s16 x_houcine = 188;
-    const s16 y_houcine =  76;
-
-    // Centrage simple du logo en supposant ~256 px de large ; ajuste si besoin
-    const s16 x_logo    =  (320 - 256) / 2;  // ~32
-    const s16 y_logo    =  12;
+    // 4) Positions
+    const s16 x_jimmy   =  16,  y_jimmy   =  84;
+    const s16 x_houcine = 188,  y_houcine =  76;
+    const s16 x_logo    =  32,  y_logo    =  12;   // centré approx
 
     Sprite* sprJimmy   = SPR_addSprite(&jimmy,   x_jimmy,   y_jimmy,   TILE_ATTR(PAL1, 0, FALSE, FALSE));
     Sprite* sprHoucine = SPR_addSprite(&houcine, x_houcine, y_houcine, TILE_ATTR(PAL2, 0, FALSE, FALSE));
     Sprite* sprLogo    = SPR_addSprite(&logo,    x_logo,    y_logo,    TILE_ATTR(PAL3, 0, FALSE, FALSE));
 
-    // 5) Texte "PRESS START" par-dessus (BG_A)
     VDP_setTextPriority(1);
     applyTextColors();
     VDP_setVerticalScroll(BG_A, 0);
@@ -267,10 +255,8 @@ static void showTitle(void)
 
     while (TRUE)
     {
-        u16 j = JOY_readJoypad(JOY_1);
-        if (j & BUTTON_START) break;
+        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
 
-        // Blink
         bool on = ((blink / 30) % 2) == 0;
         if (on)
         {
@@ -279,17 +265,18 @@ static void showTitle(void)
             s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
             VDP_drawText(pressStart, (u16)x, PRESS_START_ROW);
         }
-        else
-        {
-            VDP_clearTextArea(0, PRESS_START_ROW, MAX_COLS, 1);
-        }
+        else VDP_clearTextArea(0, PRESS_START_ROW, MAX_COLS, 1);
 
-        // Update sprites (obligatoire à chaque frame)
         SPR_update();
-
         VDP_waitVSync();
         blink++;
     }
+
+    SPR_releaseSprite(sprJimmy);
+    SPR_releaseSprite(sprHoucine);
+    SPR_releaseSprite(sprLogo);
+    SPR_end();
+}
 
     // Optionnel : nettoyer les sprites
     SPR_releaseSprite(sprJimmy);
