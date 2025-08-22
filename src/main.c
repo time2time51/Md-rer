@@ -1,4 +1,5 @@
 #include <genesis.h>
+#include <stdbool.h>
 #include <string.h>
 #include "resources.h"
 
@@ -32,6 +33,9 @@ static u16 nextTile;
 // -----------------------------------------------------------------------------
 static void resetScene(void)
 {
+    // Remet complètement l’état vidéo / VRAM / palettes / sprites
+    VDP_resetScreen();
+
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
@@ -54,7 +58,7 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
         img,
         TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, nextTile),
         0, 0,
-        FALSE,
+        TRUE,   // DMA ON
         TRUE
     );
     nextTile += img->tileset->numTile;
@@ -69,7 +73,7 @@ static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 xTil
         img,
         TILE_ATTR_FULL(palIndex, priority ? TRUE : FALSE, FALSE, FALSE, nextTile),
         xTile, yTile,
-        FALSE,
+        TRUE,  // DMA ON
         TRUE
     );
     nextTile += img->tileset->numTile;
@@ -238,10 +242,6 @@ static void playIntro(void)
 
 // -----------------------------------------------------------------------------
 // Ecran Titre (fond + compositing Jimmy/Houcine/Logo)
-// Placements auto:
-//  - logo: centré en haut (y=2 tiles)
-//  - jimmy: à gauche (x=4), bas aligné ligne 25
-//  - houcine: à droite (x=40 - w - 4), bas aligné ligne 25
 // -----------------------------------------------------------------------------
 static void showTitle(void)
 {
@@ -254,10 +254,10 @@ static void showTitle(void)
     const u16 screenTilesW = 40;
     const u16 bottomLine   = 25; // laisse 2 lignes pour "PRESS START"
 
-    // Récup tailles en tuiles (SGDK: via tilemap->w/h)
+    // tailles en tuiles (via tilemap)
     const u16 logoW    = logo.tilemap->w;
-    const u16 logoH    = logo.tilemap->h;   (void)logoH; // pas utilisé mais utile à garder si on ajuste
-    const u16 jimmyW   = jimmy.tilemap->w;
+    const u16 logoH    = logo.tilemap->h; (void)logoH;
+    const u16 jimmyW   = jimmy.tilemap->w; (void)jimmyW;
     const u16 jimmyH   = jimmy.tilemap->h;
     const u16 houcineW = houcine.tilemap->w;
     const u16 houcineH = houcine.tilemap->h;
@@ -275,9 +275,9 @@ static void showTitle(void)
     u16 y_houcine = (bottomLine >= houcineH) ? (bottomLine - houcineH) : 0;
 
     // Dessin (priorité = TRUE pour être au-dessus du BG)
-    drawImageAt(BG_A, &jimmy,   PAL1, x_jimmy,   y_jimmy,   TRUE);
+    drawImageAt(BG_A, &jimmy,   PAL1, x_jimmy,   y_jimmy, TRUE);
     drawImageAt(BG_A, &houcine, PAL2, x_houcine, y_houcine, TRUE);
-    drawImageAt(BG_A, &logo,    PAL3, x_logo,    y_logo,    TRUE);
+    drawImageAt(BG_A, &logo,    PAL3, x_logo,    y_logo, TRUE);
 
     // 3) Texte "PRESS START" par-dessus
     VDP_setTextPriority(1);
@@ -316,9 +316,15 @@ static void showTitle(void)
 int main(bool hardReset)
 {
     (void)hardReset;
+
+    // Mode vidéo fixe (évite les surprises)
+    VDP_setScreenWidth320();
+    VDP_setScreenHeight224();
+
     JOY_init();
 
     playIntro();
+    // XGM_stopPlay(); // optionnel : stoppe la musique avant le titre
     showTitle();
 
     while (TRUE) SYS_doVBlankProcess();
