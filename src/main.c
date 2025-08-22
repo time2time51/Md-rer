@@ -36,13 +36,11 @@ static void resetScene(void)
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
-    // Remise à zéro TOTALE des scrolls (A & B, H & V)
+    // Remise à zéro des scrolls (A & B, H & V)
     VDP_setHorizontalScroll(BG_A, 0);
     VDP_setVerticalScroll(BG_A, 0);
     VDP_setHorizontalScroll(BG_B, 0);
     VDP_setVerticalScroll(BG_B, 0);
-
-    // (Pas de VDP_setWindowEnabled sur cette version de SGDK)
 
     // Texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
@@ -265,4 +263,51 @@ static void showTitle(void)
 
     // 3) Texte "PRESS START" par-dessus (assure BG_A non scrollé)
     VDP_setTextPlane(BG_A);
-   
+    VDP_setTextPriority(1);
+    VDP_setHorizontalScroll(BG_A, 0);
+    VDP_setVerticalScroll(BG_A, 0);
+    applyTextColors();
+
+    const char* pressStart = "PRESS START";
+    const u16 y = PRESS_START_ROW;
+    u16 blink = 0;
+
+    // Affichage initial immédiat
+    {
+        u16 len = strlen(pressStart);
+        if (len > MAX_COLS) len = MAX_COLS;
+        s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
+        VDP_drawText(pressStart, (u16)x, y);
+    }
+
+    while (TRUE)
+    {
+        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
+
+        bool on = ((blink / 30) % 2) == 0; // ~0,5 s
+        u16 len = strlen(pressStart);
+        if (len > MAX_COLS) len = MAX_COLS;
+        s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
+
+        if (on) VDP_drawText(pressStart, (u16)x, y);
+        else    VDP_clearTextArea(0, y, MAX_COLS, 1);
+
+        VDP_waitVSync();
+        blink++;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// main
+// -----------------------------------------------------------------------------
+int main(bool hardReset)
+{
+    (void)hardReset;
+    JOY_init();
+
+    playIntro();
+    showTitle();
+
+    while (TRUE) SYS_doVBlankProcess();
+    return 0;
+}
