@@ -2,8 +2,8 @@ name: Build & Release SGDK ROM
 
 on:
   push:
-    branches: [ "main" ]
-    tags: [ "v*" ]
+    branches: ["main"]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,7 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # Sanitize resources.res (supprime BOM/CRLF/accents)
+      # Sanitize resources.res (CRLF->LF, BOM, accents -> ASCII)
       - name: Sanitize resources.res
         shell: bash
         run: |
@@ -47,13 +47,10 @@ jobs:
             head -n 20 "$RES" || true
             echo "---- hexdump (64 bytes) ----"
             head -c 64 "$RES" | hexdump -C || true
-            # CRLF -> LF
             dos2unix "$RES" >/dev/null 2>&1 || true
-            # BOM -> none
             if [ "$(head -c 3 "$RES" | hexdump -v -e '/1 "%02X"')" = "EFBBBF" ]; then
               tail -c +4 "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             fi
-            # accents/commentaires -> ASCII
             iconv -f UTF-8 -t ASCII//TRANSLIT -c "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             echo "=== AFTER sanitize ==="
             wc -c "$RES" || true
@@ -63,29 +60,31 @@ jobs:
             echo "::warning::${RES} introuvable"
           fi
 
-      # Prépare les PNG (320x224, 16 couleurs) et REMAP vers la palette de title_bg.PNG
-      - name: Prepare PNGs for SGDK (indexed 16 colors, keep each palette)
-  shell: bash
-  run: |
-    sudo apt-get update
-    sudo apt-get install -y imagemagick
-    RES_DIR="${{ steps.paths.outputs.res_dir }}"
-    shopt -s nullglob
-    for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-      [ -f "$img" ] || continue
-      echo "[Normalize] $(basename "$img") -> 320x224, 16 colors (PNG8)"
-      convert "$img" \
-        -resize 320x224\! \
-        -alpha off -background black -alpha remove \
-        -dither None -colors 16 -type palette \
-        PNG8:"$img"
-      identify -format " -> colors=%k (<=16)\n" "$img" || true
-    done
+      # Prépare les PNG (320x224, 16 couleurs, alpha off)
+      - name: Prepare PNGs for SGDK (indexed 16 colors)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y imagemagick
+          RES_DIR="${{ steps.paths.outputs.res_dir }}"
+          shopt -s nullglob
+          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
+            [ -f "$img" ] || continue
+            echo "[Normalize] $(basename "$img") -> 320x224, 16 couleurs (PNG8)"
+            convert "$img" \
+              -resize 320x224\! \
+              -alpha off -background black -alpha remove \
+              -dither None -colors 16 -type palette \
+              PNG8:"$img"
+            identify -format " -> %k couleurs\n" "$img" || true
+          done
 
       # Décompresse Intro.vgz -> intro.vgm (optionnel)
       - name: Decompress VGZ -> VGM
         shell: bash
         run: |
+          set -euo pipefail
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
           SRC=$(ls "$RES_DIR" | grep -iE '^intro\.vgz$' || true)
           if [ -n "$SRC" ]; then
@@ -104,11 +103,11 @@ jobs:
       - name: Verify resources.res before build
         shell: bash
         run: |
-          ls -l "${{ steps.paths.outputs.res_dir }}/resources.res" || exit 1
+          ls -l "${{ steps.paths.outputs.res_dir }}/resources.res"
           echo "--- HEAD ---"
           head -n 20 "${{ steps.paths.outputs.res_dir }}/resources.res"
 
-      # Build SGDK dans Docker
+      # Build SGDK dans Docker (répertoire de travail = projet)
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -128,7 +127,7 @@ jobs:
             mkdir -p src/boot out
             cp /sgdk/src/boot/sega.s src/boot/sega.s
             cp /sgdk/src/boot/rom_head.c src/boot/rom_head.c
-            # Test rescomp (debug)
+            # Test direct rescomp (debug)
             echo "Test direct rescomp:"
             /usr/bin/java -jar /sgdk/bin/rescomp.jar res/resources.res res/resources.rs -dep out/res/resources.o || true
             echo "*** Lance make ***"
