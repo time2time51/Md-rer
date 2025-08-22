@@ -60,6 +60,21 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
     nextTile += img->tileset->numTile;
 }
 
+// Image arbitraire en (xTile,yTile) avec palette / priorité plan
+static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 xTile, u16 yTile, bool priority)
+{
+    PAL_setPalette(palIndex, img->palette->data, DMA);
+    VDP_drawImageEx(
+        plane,
+        img,
+        TILE_ATTR_FULL(palIndex, priority ? TRUE : FALSE, FALSE, FALSE, nextTile),
+        xTile, yTile,
+        FALSE,
+        TRUE
+    );
+    nextTile += img->tileset->numTile;
+}
+
 // Tronque/centre ≤ 40 colonnes
 static void drawCenteredLine(u16 y, const char* s)
 {
@@ -222,7 +237,7 @@ static void playIntro(void)
 }
 
 // -----------------------------------------------------------------------------
-// Ecran Titre minimal (fond + PRESS START)
+// Ecran Titre : fond + logo + "PRESS START"
 // -----------------------------------------------------------------------------
 static void showTitle(void)
 {
@@ -231,7 +246,14 @@ static void showTitle(void)
     // 1) Fond (BG_B / PAL0)
     drawFullImageOn(BG_B, &title_bg, PAL0);
 
-    // 2) Texte "PRESS START" au-dessus
+    // 2) Logo centré en haut sur BG_A (PAL1)
+    const u16 screenTilesW = 40;
+    const u16 logoW = logo.tilemap->w;
+    const u16 x_logo = (screenTilesW - logoW) / 2;
+    const u16 y_logo = 2;
+    drawImageAt(BG_A, &logo, PAL1, x_logo, y_logo, TRUE);
+
+    // 3) Texte "PRESS START" par-dessus
     VDP_setTextPriority(1);
     applyTextColors();
     VDP_setVerticalScroll(BG_A, 0);
