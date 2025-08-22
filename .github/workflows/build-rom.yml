@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Détecte où est le projet (racine ou sous-dossier)
+      # Localise le projet (racine ou sous-dossier)
       - name: Locate project/res folders
         id: paths
         shell: bash
@@ -34,101 +34,69 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # Sanitize resources.res (BOM/accents/CRLF)
+      # Nettoie resources.res (BOM/CRLF/accents)
       - name: Sanitize resources.res
         shell: bash
         run: |
           set -euo pipefail
           RES="${{ steps.paths.outputs.res_dir }}/resources.res"
           if [ -f "$RES" ]; then
-            echo "=== BEFORE sanitize ==="
-            wc -c "$RES" || true
-            file "$RES" || true
-            head -n 20 "$RES" || true
-            echo "---- hexdump (64 bytes) ----"
-            head -c 64 "$RES" | hexdump -C || true
             dos2unix "$RES" >/dev/null 2>&1 || true
-            # supprime BOM si présent
+            # supprime BOM UTF-8 s’il existe
             if [ "$(head -c 3 "$RES" | hexdump -v -e '/1 "%02X"')" = "EFBBBF" ]; then
               tail -c +4 "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             fi
-            # translit commentaires (accents -> ascii)
+            # accents -> ASCII (uniquement pour éviter les surprises)
             iconv -f UTF-8 -t ASCII//TRANSLIT -c "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
-            echo "=== AFTER sanitize ==="
-            wc -c "$RES" || true
-            file "$RES" || true
-            head -n 20 "$RES" || true
+            echo "resources.res ok:"
+            head -n 30 "$RES"
           else
             echo "::warning::${RES} introuvable"
           fi
 
-      # Prépare les PNGs (fonds vs overlays)
-      - name: Prepare PNGs for SGDK (separate BG and overlays)
+      # Prépare les PNG : on normalise les 3 fonds d’intro + le fond titre.
+      # (On évite ici de toucher à d’éventuels sprites plus tard.)
+      - name: Normalize title/intro PNGs (320x224, 16 colors)
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -y
+          sudo apt-get update
           sudo apt-get install -y imagemagick
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
-
-          echo "[BG] 320x224, 16 couleurs, pas d'alpha"
-          for n in intro1 intro2 intro3 title_bg; do
-            img="${RES_DIR}/${n}.PNG"
-            [ -f "$img" ] || continue
-            echo "  -> $(basename "$img")"
-            convert "$img" \
-              -resize 320x224\! \
-              -alpha off -background black -alpha remove \
-              -dither None -colors 16 -type palette \
-              PNG8:"$img"
+          for f in intro1.PNG intro2.PNG intro3.PNG title_bg.PNG; do
+            if [ -f "$RES_DIR/$f" ]; then
+              echo "[Normalize] $f -> 320x224, 16 couleurs (PNG8)"
+              convert "$RES_DIR/$f" \
+                -resize 320x224\! \
+                -alpha off -background black -alpha remove \
+                -dither None -colors 16 -type palette \
+                PNG8:"$RES_DIR/$f"
+            fi
           done
 
-          echo "[OVERLAYS] pas de resize, conserve alpha, 16 couleurs"
-          for n in jimmy houcine logo; do
-            img="${RES_DIR}/${n}.PNG"
-            [ -f "$img" ] || continue
-            echo "  -> $(basename "$img")"
-            convert "$img" \
-              -alpha on \
-              -dither None -colors 16 -type palette \
-              PNG8:"$img"
-          done
-
-          echo "[Check] nombre de couleurs"
-          shopt -s nullglob
-          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-            [ -f "$img" ] || continue
-            c=$(identify -format "%k" "$img" || echo "?")
-            echo "  $(basename "$img"): $c couleurs"
-          done
-
-      # Décompresse Intro.vgz -> intro.vgm (optionnel)
+      # Décompresse Intro.vgz -> intro.vgm si présent
       - name: Decompress VGZ -> VGM
         shell: bash
         run: |
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          SRC=$(ls "$RES_DIR" | grep -iE '^intro\.vgz$' || true)
-          if [ -n "$SRC" ]; then
-            echo "Intro.vgz trouvé -> conversion en intro.vgm"
-            gzip -dc "$RES_DIR/$SRC" > "$RES_DIR/intro.vgm"
+          if [ -f "$RES_DIR/intro.vgz" ]; then
+            echo "VGZ -> VGM"
+            gzip -dc "$RES_DIR/intro.vgz" > "$RES_DIR/intro.vgm"
             ls -lh "$RES_DIR/intro.vgm"
-          else
-            echo "Avertissement: intro.vgz absent (OK si intro.vgm existe déjà)"
           fi
 
-      # Droits d’écriture pour l’UID 1000 du conteneur SGDK
+      # Donne les droits au conteneur
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # Vérif présence du fichier avant Docker
+      # Petite vérif
       - name: Verify resources.res before build
         shell: bash
         run: |
           ls -l "${{ steps.paths.outputs.res_dir }}/resources.res"
-          echo "--- HEAD ---"
           head -n 20 "${{ steps.paths.outputs.res_dir }}/resources.res"
 
-      # Build SGDK dans Docker (rép. de travail = projet)
+      # Build SGDK dans Docker
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -141,26 +109,21 @@ jobs:
             -w /m68k/${{ steps.paths.outputs.project_dir }}
           run: |
             set -e
-            echo "***"
-            echo "Listing res/ depuis le conteneur:"
-            ls -l res || true
-            echo "***"
             mkdir -p src/boot out
             cp /sgdk/src/boot/sega.s src/boot/sega.s
             cp /sgdk/src/boot/rom_head.c src/boot/rom_head.c
-            # Test direct rescomp avant make (debug)
-            echo "Test direct rescomp:"
+            echo "*** Test rescomp ***"
             /usr/bin/java -jar /sgdk/bin/rescomp.jar res/resources.res res/resources.rs -dep out/res/resources.o || true
-            echo "*** Lance make ***"
+            echo "*** make ***"
             make -j1
             echo '=== out/ listing ==='
             ls -lh ./out || true
 
-      # Rendre les fichiers au runner
+      # Rend les permissions au runner
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
-      # Prépare le nom de sortie
+      # Prépare le nom de la ROM
       - name: Prepare ROM filename
         id: name
         shell: bash
@@ -172,7 +135,6 @@ jobs:
             ls -la "$OUT_DIR" || true
             exit 1
           fi
-          echo "ROM detectee: $ROM"
           REPO="${GITHUB_REPOSITORY##*/}"
           VER="${GITHUB_REF_NAME}"
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
