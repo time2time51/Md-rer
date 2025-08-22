@@ -61,23 +61,55 @@ jobs:
           fi
 
       # Prépare les PNG (320x224, 16 couleurs, alpha off)
-      - name: Prepare PNGs for SGDK (indexed 16 colors)
+      - name: Prepare PNGs for SGDK (backgrounds vs overlays)
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -y
           sudo apt-get install -y imagemagick
+
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          shopt -s nullglob
+
+          echo "[Backgrounds] 320x224, 16 colors, no alpha"
+          for f in intro1.PNG intro2.PNG intro3.PNG title_bg.PNG; do
+            if [ -f "$RES_DIR/$f" ]; then
+              echo "  -> $f"
+              convert "$RES_DIR/$f" \
+                -resize 320x224\! \
+                -alpha off -background black -alpha remove \
+                -dither None -colors 16 -type palette \
+                PNG8:"$RES_DIR/$f"
+            fi
+          done
+
+          echo "[Overlays] keep alpha, 16 colors, sized to fit VRAM"
+          if [ -f "$RES_DIR/jimmy.PNG" ]; then
+            echo "  -> jimmy.PNG (128x160)"
+            convert "$RES_DIR/jimmy.PNG" \
+              -resize 128x160\! \
+              -dither None -colors 16 \
+              PNG8:"$RES_DIR/jimmy.PNG"
+          fi
+          if [ -f "$RES_DIR/houcine.PNG" ]; then
+            echo "  -> houcine.PNG (128x160)"
+            convert "$RES_DIR/houcine.PNG" \
+              -resize 128x160\! \
+              -dither None -colors 16 \
+              PNG8:"$RES_DIR/houcine.PNG"
+          fi
+          if [ -f "$RES_DIR/logo.PNG" ]; then
+            echo "  -> logo.PNG (192x64)"
+            convert "$RES_DIR/logo.PNG" \
+              -resize 192x64\! \
+              -dither None -colors 16 \
+              PNG8:"$RES_DIR/logo.PNG"
+          fi
+
+          echo "[Check colors]"
           for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
             [ -f "$img" ] || continue
-            echo "[Normalize] $(basename "$img") -> 320x224, 16 couleurs (PNG8)"
-            convert "$img" \
-              -resize 320x224\! \
-              -alpha off -background black -alpha remove \
-              -dither None -colors 16 -type palette \
-              PNG8:"$img"
-            identify -format " -> %k couleurs\n" "$img" || true
+            c=$(identify -format "%k" "$img" || echo "?")
+            echo "  $(basename "$img") -> colors=$c"
           done
 
       # Décompresse Intro.vgz -> intro.vgm (optionnel)
