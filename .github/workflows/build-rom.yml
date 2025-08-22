@@ -16,7 +16,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Localise le projet (racine ou sous-dossier)
       - name: Locate project/res folders
         id: paths
         shell: bash
@@ -34,7 +33,7 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # Nettoie resources.res (BOM/CRLF/accents)
+      # Nettoyage du resources.res (BOM/CRLF/accents) — OK
       - name: Sanitize resources.res
         shell: bash
         run: |
@@ -42,58 +41,19 @@ jobs:
           RES="${{ steps.paths.outputs.res_dir }}/resources.res"
           if [ -f "$RES" ]; then
             dos2unix "$RES" >/dev/null 2>&1 || true
-            # supprime BOM UTF-8 s’il existe
             if [ "$(head -c 3 "$RES" | hexdump -v -e '/1 "%02X"')" = "EFBBBF" ]; then
               tail -c +4 "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             fi
-            # accents -> ASCII
             iconv -f UTF-8 -t ASCII//TRANSLIT -c "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
-            echo "resources.res ok:"
+            echo "resources.res:"
             head -n 30 "$RES"
           else
             echo "::warning::${RES} introuvable"
           fi
 
-      # Prépare les PNG : fonds en 320x224, logo en 192x96
-      - name: Prepare PNGs for SGDK (indexed 16 colors)
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y imagemagick
-          RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          shopt -s nullglob
-          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-            [ -f "$img" ] || continue
-            base="$(basename "$img")"
-            echo "[Normalize] $base"
-            case "$base" in
-              intro1.PNG|intro2.PNG|intro3.PNG|title_bg.PNG)
-                convert "$img" \
-                  -resize 320x224\! \
-                  -alpha off -background black -alpha remove \
-                  -dither None -colors 16 -type palette \
-                  PNG8:"$img"
-                ;;
-              logo.PNG)
-                convert "$img" \
-                  -resize 192x96\! \
-                  -alpha off -background black -alpha remove \
-                  -dither None -colors 16 -type palette \
-                  PNG8:"$img"
-                ;;
-              *)
-                convert "$img" \
-                  -alpha off -background black -alpha remove \
-                  -dither None -colors 16 -type palette \
-                  PNG8:"$img"
-                ;;
-            esac
-            COLORS=$(identify -format "%k" "$img" || echo "?")
-            echo " -> colors=$COLORS (<=16)"
-          done
+      # (SUPPRIMÉ) — On ne reconvertit plus les PNG à 16 couleurs ici.
+      # ResComp fera la conversion avec les palettes que tu as préparées.
 
-      # Décompresse Intro.vgz -> intro.vgm si présent
       - name: Decompress VGZ -> VGM
         shell: bash
         run: |
