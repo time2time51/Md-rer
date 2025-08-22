@@ -32,31 +32,18 @@ static u16 nextTile;
 // -----------------------------------------------------------------------------
 static void resetScene(void)
 {
-    // Taille des plans & modes de scroll
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
-    // Remise à zéro des scrolls (A & B, H & V)
-    VDP_setHorizontalScroll(BG_A, 0);
-    VDP_setVerticalScroll(BG_A, 0);
-    VDP_setHorizontalScroll(BG_B, 0);
-    VDP_setVerticalScroll(BG_B, 0);
-
-    // Charge/assure la police par défaut en VRAM
-    VDP_loadFont(&font_default, DMA);
-
-    // Texte par défaut sur BG_A
+    // texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
     VDP_setTextPriority(0);
     VDP_setTextPalette(TEXT_PAL);
 
-    // Nettoyage
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);
 
-    // IMPORTANT : on laisse de la marge pour la font/éléments système
-    // (évite que les grosses images écrasent les tuiles de police)
-    nextTile = TILE_USER_INDEX + 256;
+    nextTile = TILE_USER_INDEX;
 }
 
 static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
@@ -71,26 +58,6 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
         TRUE
     );
     nextTile += img->tileset->numTile;
-
-    // Laisse le temps au DMA de finir avant d'afficher le frame suivant
-    VDP_waitVSync();
-}
-
-static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 xTile, u16 yTile, bool priority)
-{
-    PAL_setPalette(palIndex, img->palette->data, DMA);
-    VDP_drawImageEx(
-        plane,
-        img,
-        TILE_ATTR_FULL(palIndex, priority ? TRUE : FALSE, FALSE, FALSE, nextTile),
-        xTile, yTile,
-        FALSE,
-        TRUE
-    );
-    nextTile += img->tileset->numTile;
-
-    // Sécurise la fin des transferts DMA
-    VDP_waitVSync();
 }
 
 // Tronque/centre ≤ 40 colonnes
@@ -255,7 +222,7 @@ static void playIntro(void)
 }
 
 // -----------------------------------------------------------------------------
-// Ecran Titre : fond + logo + "PRESS START"
+// Ecran Titre minimal (fond + PRESS START)
 // -----------------------------------------------------------------------------
 static void showTitle(void)
 {
@@ -264,43 +231,31 @@ static void showTitle(void)
     // 1) Fond (BG_B / PAL0)
     drawFullImageOn(BG_B, &title_bg, PAL0);
 
-    // 2) Logo centré en haut sur BG_A (PAL1)
-    const u16 screenTilesW = 40;
-    const u16 logoW = logo.tilemap->w;
-    const u16 x_logo = (screenTilesW - logoW) / 2;
-    const u16 y_logo = 2;
-    drawImageAt(BG_A, &logo, PAL1, x_logo, y_logo, TRUE);
-
-    // 3) Texte "PRESS START" par-dessus (assure BG_A non scrollé)
-    VDP_setTextPlane(BG_A);
+    // 2) Texte "PRESS START" au-dessus
     VDP_setTextPriority(1);
-    VDP_setHorizontalScroll(BG_A, 0);
-    VDP_setVerticalScroll(BG_A, 0);
     applyTextColors();
+    VDP_setVerticalScroll(BG_A, 0);
 
     const char* pressStart = "PRESS START";
-    const u16 y = PRESS_START_ROW;
     u16 blink = 0;
-
-    // Affichage initial
-    {
-        u16 len = strlen(pressStart);
-        if (len > MAX_COLS) len = MAX_COLS;
-        s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-        VDP_drawText(pressStart, (u16)x, y);
-    }
 
     while (TRUE)
     {
-        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
+        u16 j = JOY_readJoypad(JOY_1);
+        if (j & BUTTON_START) break;
 
         bool on = ((blink / 30) % 2) == 0; // ~0,5 s
-        u16 len = strlen(pressStart);
-        if (len > MAX_COLS) len = MAX_COLS;
-        s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-
-        if (on) VDP_drawText(pressStart, (u16)x, y);
-        else    VDP_clearTextArea(0, y, MAX_COLS, 1);
+        if (on)
+        {
+            u16 len = strlen(pressStart);
+            if (len > MAX_COLS) len = MAX_COLS;
+            s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
+            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW);
+        }
+        else
+        {
+            VDP_clearTextArea(0, PRESS_START_ROW, MAX_COLS, 1);
+        }
 
         VDP_waitVSync();
         blink++;
@@ -313,10 +268,7 @@ static void showTitle(void)
 int main(bool hardReset)
 {
     (void)hardReset;
-
-    // Init entrée + police dès le début pour être béton
     JOY_init();
-    VDP_loadFont(&font_default, DMA);
 
     playIntro();
     showTitle();
