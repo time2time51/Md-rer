@@ -1,10 +1,7 @@
-# --- Palette de référence (optionnelle, pour usage côté C si besoin) ---
-PALETTE title_bg_pal "title_bg.PNG"
-
 # --- INTRO (3 fonds plein écran) ---
-IMAGE intro1   "intro1.PNG"   0
-IMAGE intro2   "intro2.PNG"   0
-IMAGE intro3   "intro3.PNG"   0
+IMAGE intro1 "intro1.PNG" 0
+IMAGE intro2 "intro2.PNG" 0
+IMAGE intro3 "intro3.PNG" 0
 
 # --- ÉCRAN TITRE (fond + persos + logo) ---
 IMAGE title_bg "title_bg.PNG" 0
