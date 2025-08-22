@@ -25,6 +25,9 @@
 // -----------------------------------------------------------------------------
 // Etat commun
 // -----------------------------------------------------------------------------
+// IMPORTANT : ne chargez pas vos images trop bas en VRAM sinon elles écrasent la
+// police système utilisée par VDP_drawText(). On part volontairement plus haut.
+#define USER_TILE_BASE (TILE_USER_INDEX + 512)
 static u16 nextTile;
 
 // -----------------------------------------------------------------------------
@@ -32,26 +35,21 @@ static u16 nextTile;
 // -----------------------------------------------------------------------------
 static void resetScene(void)
 {
-    // Taille des plans & modes de scroll
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
-    // Remise à zéro des scrolls (A & B, H & V)
-    VDP_setHorizontalScroll(BG_A, 0);
-    VDP_setVerticalScroll(BG_A, 0);
-    VDP_setHorizontalScroll(BG_B, 0);
-    VDP_setVerticalScroll(BG_B, 0);
-
-    // Texte par défaut sur BG_A
+    // texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
     VDP_setTextPriority(0);
     VDP_setTextPalette(TEXT_PAL);
 
-    // Nettoyage
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);
 
-    nextTile = TILE_USER_INDEX;
+    // Recharge la police système au cas où des images l'auraient écrasée
+    VDP_loadFont(&font_default, DMA);
+
+    nextTile = USER_TILE_BASE;
 }
 
 static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
@@ -210,6 +208,11 @@ static bool runIntroSegment(const Image* img, const char* const* lines, u16 coun
     // image
     drawFullImageOn(BG_B, img, PAL0);
 
+    // TRÈS IMPORTANT : recharger la police *après* avoir dessiné les images
+    // si jamais la zone police a été écrasée par un gros tileset.
+    VDP_loadFont(&font_default, DMA);
+    VDP_setTextPalette(TEXT_PAL);
+
     // texte en bas
     const u16 yStart = TEXT_FIRST_VISIBLE_ROW;
     drawWrappedBlock(yStart, lines, count);
@@ -261,36 +264,35 @@ static void showTitle(void)
     const u16 y_logo = 2;
     drawImageAt(BG_A, &logo, PAL1, x_logo, y_logo, TRUE);
 
-    // 3) Texte "PRESS START" par-dessus (assure BG_A non scrollé)
-    VDP_setTextPlane(BG_A);
+    // Recharger police juste après le dessin des images pour être 100% safe
+    VDP_loadFont(&font_default, DMA);
+
+    // 3) Texte "PRESS START" par-dessus
     VDP_setTextPriority(1);
-    VDP_setHorizontalScroll(BG_A, 0);
-    VDP_setVerticalScroll(BG_A, 0);
+    VDP_setTextPalette(TEXT_PAL);
     applyTextColors();
+    VDP_setVerticalScroll(BG_A, 0);
 
     const char* pressStart = "PRESS START";
-    const u16 y = PRESS_START_ROW;
     u16 blink = 0;
-
-    // Affichage initial immédiat
-    {
-        u16 len = strlen(pressStart);
-        if (len > MAX_COLS) len = MAX_COLS;
-        s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-        VDP_drawText(pressStart, (u16)x, y);
-    }
 
     while (TRUE)
     {
-        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
+        u16 j = JOY_readJoypad(JOY_1);
+        if (j & BUTTON_START) break;
 
         bool on = ((blink / 30) % 2) == 0; // ~0,5 s
-        u16 len = strlen(pressStart);
-        if (len > MAX_COLS) len = MAX_COLS;
-        s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-
-        if (on) VDP_drawText(pressStart, (u16)x, y);
-        else    VDP_clearTextArea(0, y, MAX_COLS, 1);
+        if (on)
+        {
+            u16 len = strlen(pressStart);
+            if (len > MAX_COLS) len = MAX_COLS;
+            s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
+            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW);
+        }
+        else
+        {
+            VDP_clearTextArea(0, PRESS_START_ROW, MAX_COLS, 1);
+        }
 
         VDP_waitVSync();
         blink++;
