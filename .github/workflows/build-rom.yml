@@ -16,6 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Localise le projet (racine ou sous-dossier)
       - name: Locate project/res folders
         id: paths
         shell: bash
@@ -33,7 +34,7 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # Nettoyage du resources.res (BOM/CRLF/accents) — OK
+      # Nettoie resources.res (BOM/CRLF/accents)
       - name: Sanitize resources.res
         shell: bash
         run: |
@@ -41,19 +42,41 @@ jobs:
           RES="${{ steps.paths.outputs.res_dir }}/resources.res"
           if [ -f "$RES" ]; then
             dos2unix "$RES" >/dev/null 2>&1 || true
+            # supprime BOM UTF-8 s’il existe
             if [ "$(head -c 3 "$RES" | hexdump -v -e '/1 "%02X"')" = "EFBBBF" ]; then
               tail -c +4 "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             fi
+            # accents -> ASCII (évite surprises)
             iconv -f UTF-8 -t ASCII//TRANSLIT -c "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
-            echo "resources.res:"
-            head -n 30 "$RES"
+            echo "resources.res ok:"
+            head -n 30 "$RES" || true
           else
             echo "::warning::${RES} introuvable"
           fi
 
-      # (SUPPRIMÉ) — On ne reconvertit plus les PNG à 16 couleurs ici.
-      # ResComp fera la conversion avec les palettes que tu as préparées.
+      # Prépare les PNG (force 16 couleurs indexées, sans alpha) — pas de resize
+      - name: Normalize PNGs to indexed 16 colors (no resize)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
+          RES_DIR="${{ steps.paths.outputs.res_dir }}"
+          # Limité aux images réellement déclarées dans resources.res
+          for f in intro1.PNG intro2.PNG intro3.PNG title_bg.PNG logo.PNG; do
+            if [ -f "$RES_DIR/$f" ]; then
+              echo "[Normalize] $f -> PNG8 (16 couleurs), alpha off"
+              convert "$RES_DIR/$f" \
+                -alpha off -background black -alpha remove \
+                -dither None -colors 16 -type Palette \
+                -define png:color-type=3 \
+                PNG8:"$RES_DIR/$f"
+              echo -n "Vérif: "
+              identify -format "%f -> %Wx%H, depth=%z, type=%[color-type], colors=%k\n" "$RES_DIR/$f" || true
+            fi
+          done
 
+      # Décompresse Intro.vgz -> intro.vgm si présent
       - name: Decompress VGZ -> VGM
         shell: bash
         run: |
@@ -64,15 +87,18 @@ jobs:
             ls -lh "$RES_DIR/intro.vgm"
           fi
 
+      # Donne les droits au conteneur
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
+      # Petite vérif
       - name: Verify resources.res before build
         shell: bash
         run: |
-          ls -l "${{ steps.paths.outputs.res_dir }}/resources.res"
-          head -n 20 "${{ steps.paths.outputs.res_dir }}/resources.res"
+          ls -l "${{ steps.paths.outputs.res_dir }}/resources.res" || true
+          head -n 20 "${{ steps.paths.outputs.res_dir }}/resources.res" || true
 
+      # Build SGDK dans Docker
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -95,9 +121,11 @@ jobs:
             echo '=== out/ listing ==='
             ls -lh ./out || true
 
+      # Rend les permissions au runner
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
+      # Prépare le nom de la ROM
       - name: Prepare ROM filename
         id: name
         shell: bash
@@ -120,6 +148,7 @@ jobs:
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
           ls -la "$OUT"
 
+      # Upload artifact
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
