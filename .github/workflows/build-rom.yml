@@ -64,49 +64,23 @@ jobs:
           fi
 
       # Prépare les PNG (320x224, 16 couleurs) et REMAP vers la palette de title_bg.PNG
-      - name: Prepare PNGs for SGDK (16-color palette remap)
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y imagemagick
-
-          RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          shopt -s nullglob
-
-          # 1) Normalise d'abord title_bg.PNG (référence de palette)
-          if [ -f "$RES_DIR/title_bg.PNG" ]; then
-            echo "[Normalize] title_bg.PNG -> 320x224, PNG8 (16 cols)"
-            convert "$RES_DIR/title_bg.PNG" \
-              -resize 320x224\! \
-              -alpha off -background black -alpha remove \
-              -dither None -colors 16 -type palette \
-              PNG8:"$RES_DIR/title_bg.PNG"
-          else
-            echo "::error::title_bg.PNG manquant dans $RES_DIR"
-            exit 1
-          fi
-
-          # 2) Normalise puis remap tous les autres PNG vers la palette de title_bg.PNG
-          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-            [ -f "$img" ] || continue
-            base=$(basename "$img")
-            if [ "$base" = "title_bg.PNG" ]; then
-              continue
-            fi
-            echo "[Normalize] $base -> 320x224, PNG8 (<=16 cols)"
-            convert "$img" \
-              -resize 320x224\! \
-              -alpha off -background black -alpha remove \
-              -dither None -colors 16 -type palette \
-              PNG8:"$img"
-
-            echo "[Remap] $base -> palette de title_bg.PNG"
-            convert "$img" +dither -remap "$RES_DIR/title_bg.PNG" PNG8:"$img"
-
-            COLORS=$(identify -format "%k" "$img" || echo "?")
-            echo " -> colors=$COLORS (<=16)"
-          done
+      - name: Prepare PNGs for SGDK (indexed 16 colors, keep each palette)
+  shell: bash
+  run: |
+    sudo apt-get update
+    sudo apt-get install -y imagemagick
+    RES_DIR="${{ steps.paths.outputs.res_dir }}"
+    shopt -s nullglob
+    for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
+      [ -f "$img" ] || continue
+      echo "[Normalize] $(basename "$img") -> 320x224, 16 colors (PNG8)"
+      convert "$img" \
+        -resize 320x224\! \
+        -alpha off -background black -alpha remove \
+        -dither None -colors 16 -type palette \
+        PNG8:"$img"
+      identify -format " -> colors=%k (<=16)\n" "$img" || true
+    done
 
       # Décompresse Intro.vgz -> intro.vgm (optionnel)
       - name: Decompress VGZ -> VGM
