@@ -32,14 +32,25 @@ static u16 nextTile;
 // -----------------------------------------------------------------------------
 static void resetScene(void)
 {
+    // Taille des plans & modes de scroll
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
-    // texte par défaut sur BG_A
+    // Remise à zéro TOTALE des scrolls (A & B, H & V)
+    VDP_setHorizontalScroll(BG_A, 0);
+    VDP_setVerticalScroll(BG_A, 0);
+    VDP_setHorizontalScroll(BG_B, 0);
+    VDP_setVerticalScroll(BG_B, 0);
+
+    // Désactive la window plane
+    VDP_setWindowEnabled(FALSE);
+
+    // Texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
     VDP_setTextPriority(0);
     VDP_setTextPalette(TEXT_PAL);
 
+    // Nettoyage
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);
 
@@ -253,31 +264,37 @@ static void showTitle(void)
     const u16 y_logo = 2;
     drawImageAt(BG_A, &logo, PAL1, x_logo, y_logo, TRUE);
 
-    // 3) Texte "PRESS START" par-dessus
+    // 3) Texte "PRESS START" par-dessus (assure que BG_A n'est pas scrollé)
+    VDP_setTextPlane(BG_A);
     VDP_setTextPriority(1);
-    applyTextColors();
+    VDP_setHorizontalScroll(BG_A, 0);
     VDP_setVerticalScroll(BG_A, 0);
+    applyTextColors();
 
     const char* pressStart = "PRESS START";
+    const u16 y = PRESS_START_ROW;
     u16 blink = 0;
+
+    // Dessine une première fois pour qu'il soit visible si on arrive
+    // ici juste après un skip de l'intro.
+    {
+        u16 len = strlen(pressStart);
+        if (len > MAX_COLS) len = MAX_COLS;
+        s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
+        VDP_drawText(pressStart, (u16)x, y);
+    }
 
     while (TRUE)
     {
-        u16 j = JOY_readJoypad(JOY_1);
-        if (j & BUTTON_START) break;
+        if (JOY_readJoypad(JOY_1) & BUTTON_START) break;
 
         bool on = ((blink / 30) % 2) == 0; // ~0,5 s
-        if (on)
-        {
-            u16 len = strlen(pressStart);
-            if (len > MAX_COLS) len = MAX_COLS;
-            s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
-            VDP_drawText(pressStart, (u16)x, PRESS_START_ROW);
-        }
-        else
-        {
-            VDP_clearTextArea(0, PRESS_START_ROW, MAX_COLS, 1);
-        }
+        u16 len = strlen(pressStart);
+        if (len > MAX_COLS) len = MAX_COLS;
+        s16 x = (MAX_COLS - (s16)len) / 2; if (x < 0) x = 0;
+
+        if (on) VDP_drawText(pressStart, (u16)x, y);
+        else    VDP_clearTextArea(0, y, MAX_COLS, 1);
 
         VDP_waitVSync();
         blink++;
