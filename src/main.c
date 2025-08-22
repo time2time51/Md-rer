@@ -14,7 +14,7 @@
 #define SCROLL_STEP_PERIOD       30
 
 #define TEXT_PAL                 PAL2
-#define TEXT_COLOR               0xFF0000   // ROUGE vif pour le texte
+#define TEXT_COLOR               0xFF0000   // ROUGE
 #define TEXT_BG                  0x000000
 #define MAX_COLS                 40
 
@@ -35,7 +35,7 @@ static void resetScene(void)
     VDP_setPlaneSize(64, 64, TRUE);
     VDP_setScrollingMode(HSCROLL_PLANE, VSCROLL_PLANE);
 
-    // texte sur BG_A
+    // texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
     VDP_setTextPriority(0);
     VDP_setTextPalette(TEXT_PAL);
@@ -43,7 +43,6 @@ static void resetScene(void)
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);
 
-    // IMPORTANT: on repart du premier index utilisateur
     nextTile = TILE_USER_INDEX;
 }
 
@@ -55,21 +54,6 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
         img,
         TILE_ATTR_FULL(palIndex, FALSE, FALSE, FALSE, nextTile),
         0, 0,
-        FALSE,
-        TRUE
-    );
-    nextTile += img->tileset->numTile;
-}
-
-// Image arbitraire en (xTile,yTile) avec palette / priorité plan
-static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 xTile, u16 yTile, bool priority)
-{
-    PAL_setPalette(palIndex, img->palette->data, DMA);
-    VDP_drawImageEx(
-        plane,
-        img,
-        TILE_ATTR_FULL(palIndex, priority ? TRUE : FALSE, FALSE, FALSE, nextTile),
-        xTile, yTile,
         FALSE,
         TRUE
     );
@@ -238,7 +222,7 @@ static void playIntro(void)
 }
 
 // -----------------------------------------------------------------------------
-// Ecran Titre (fond + compositing Jimmy/Houcine/Logo)
+// Ecran Titre minimal (fond + PRESS START)
 // -----------------------------------------------------------------------------
 static void showTitle(void)
 {
@@ -247,36 +231,7 @@ static void showTitle(void)
     // 1) Fond (BG_B / PAL0)
     drawFullImageOn(BG_B, &title_bg, PAL0);
 
-    // 2) Avant-plan (BG_A)
-    const u16 screenTilesW = 40;
-    const u16 bottomLine   = 25; // laisse 2 lignes pour "PRESS START"
-
-    // tailles en tuiles (Image -> tilemap w/h)
-    const u16 logoW    = logo.tilemap->w;
-    const u16 logoH    = logo.tilemap->h;   (void)logoH;
-    const u16 jimmyW   = jimmy.tilemap->w;
-    const u16 jimmyH   = jimmy.tilemap->h;
-    const u16 houcineW = houcine.tilemap->w;
-    const u16 houcineH = houcine.tilemap->h;
-
-    // LOGO centré
-    u16 x_logo = (screenTilesW - logoW) / 2;
-    u16 y_logo = 2;
-
-    // JIMMY à gauche
-    u16 x_jimmy = 4;
-    u16 y_jimmy = (bottomLine >= jimmyH) ? (bottomLine - jimmyH) : 0;
-
-    // HOUCINE à droite
-    u16 x_houcine = (screenTilesW - houcineW - 4);
-    u16 y_houcine = (bottomLine >= houcineH) ? (bottomLine - houcineH) : 0;
-
-    // Dessin (priorité TRUE pour passer au-dessus du BG)
-    drawImageAt(BG_A, &jimmy,   PAL1, x_jimmy,   y_jimmy,   TRUE);
-    drawImageAt(BG_A, &houcine, PAL2, x_houcine, y_houcine, TRUE);
-    drawImageAt(BG_A, &logo,    PAL3, x_logo,    y_logo,    TRUE);
-
-    // 3) Texte "PRESS START" par-dessus
+    // 2) Texte "PRESS START" au-dessus
     VDP_setTextPriority(1);
     applyTextColors();
     VDP_setVerticalScroll(BG_A, 0);
