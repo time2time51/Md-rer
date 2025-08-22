@@ -46,7 +46,7 @@ jobs:
             if [ "$(head -c 3 "$RES" | hexdump -v -e '/1 "%02X"')" = "EFBBBF" ]; then
               tail -c +4 "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             fi
-            # accents -> ASCII (uniquement pour éviter les surprises)
+            # accents -> ASCII
             iconv -f UTF-8 -t ASCII//TRANSLIT -c "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             echo "resources.res ok:"
             head -n 30 "$RES"
@@ -54,24 +54,43 @@ jobs:
             echo "::warning::${RES} introuvable"
           fi
 
-      # Prépare les PNG : on normalise les 3 fonds d’intro + le fond titre.
-      # (On évite ici de toucher à d’éventuels sprites plus tard.)
-      - name: Normalize title/intro PNGs (320x224, 16 colors)
+      # Prépare les PNG : fonds en 320x224, logo en 192x96
+      - name: Prepare PNGs for SGDK (indexed 16 colors)
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y imagemagick
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
-          for f in intro1.PNG intro2.PNG intro3.PNG title_bg.PNG; do
-            if [ -f "$RES_DIR/$f" ]; then
-              echo "[Normalize] $f -> 320x224, 16 couleurs (PNG8)"
-              convert "$RES_DIR/$f" \
-                -resize 320x224\! \
-                -alpha off -background black -alpha remove \
-                -dither None -colors 16 -type palette \
-                PNG8:"$RES_DIR/$f"
-            fi
+          shopt -s nullglob
+          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
+            [ -f "$img" ] || continue
+            base="$(basename "$img")"
+            echo "[Normalize] $base"
+            case "$base" in
+              intro1.PNG|intro2.PNG|intro3.PNG|title_bg.PNG)
+                convert "$img" \
+                  -resize 320x224\! \
+                  -alpha off -background black -alpha remove \
+                  -dither None -colors 16 -type palette \
+                  PNG8:"$img"
+                ;;
+              logo.PNG)
+                convert "$img" \
+                  -resize 192x96\! \
+                  -alpha off -background black -alpha remove \
+                  -dither None -colors 16 -type palette \
+                  PNG8:"$img"
+                ;;
+              *)
+                convert "$img" \
+                  -alpha off -background black -alpha remove \
+                  -dither None -colors 16 -type palette \
+                  PNG8:"$img"
+                ;;
+            esac
+            COLORS=$(identify -format "%k" "$img" || echo "?")
+            echo " -> colors=$COLORS (<=16)"
           done
 
       # Décompresse Intro.vgz -> intro.vgm si présent
@@ -85,18 +104,15 @@ jobs:
             ls -lh "$RES_DIR/intro.vgm"
           fi
 
-      # Donne les droits au conteneur
       - name: Make workspace writable for container
         run: sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
 
-      # Petite vérif
       - name: Verify resources.res before build
         shell: bash
         run: |
           ls -l "${{ steps.paths.outputs.res_dir }}/resources.res"
           head -n 20 "${{ steps.paths.outputs.res_dir }}/resources.res"
 
-      # Build SGDK dans Docker
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -119,11 +135,9 @@ jobs:
             echo '=== out/ listing ==='
             ls -lh ./out || true
 
-      # Rend les permissions au runner
       - name: Fix back permissions for runner
         run: sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
 
-      # Prépare le nom de la ROM
       - name: Prepare ROM filename
         id: name
         shell: bash
@@ -146,7 +160,6 @@ jobs:
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
           ls -la "$OUT"
 
-      # Upload artifact
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
