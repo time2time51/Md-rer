@@ -42,6 +42,9 @@ static void resetScene(void)
     VDP_setHorizontalScroll(BG_B, 0);
     VDP_setVerticalScroll(BG_B, 0);
 
+    // Charge/assure la police par défaut en VRAM
+    VDP_loadFont(&font_default, DMA);
+
     // Texte par défaut sur BG_A
     VDP_setTextPlane(BG_A);
     VDP_setTextPriority(0);
@@ -51,7 +54,9 @@ static void resetScene(void)
     VDP_clearPlane(BG_A, TRUE);
     VDP_clearPlane(BG_B, TRUE);
 
-    nextTile = TILE_USER_INDEX;
+    // IMPORTANT : on laisse de la marge pour la font/éléments système
+    // (évite que les grosses images écrasent les tuiles de police)
+    nextTile = TILE_USER_INDEX + 256;
 }
 
 static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
@@ -66,9 +71,11 @@ static void drawFullImageOn(VDPPlane plane, const Image* img, u16 palIndex)
         TRUE
     );
     nextTile += img->tileset->numTile;
+
+    // Laisse le temps au DMA de finir avant d'afficher le frame suivant
+    VDP_waitVSync();
 }
 
-// Image arbitraire en (xTile,yTile) avec palette / priorité plan
 static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 xTile, u16 yTile, bool priority)
 {
     PAL_setPalette(palIndex, img->palette->data, DMA);
@@ -81,6 +88,9 @@ static void drawImageAt(VDPPlane plane, const Image* img, u16 palIndex, u16 xTil
         TRUE
     );
     nextTile += img->tileset->numTile;
+
+    // Sécurise la fin des transferts DMA
+    VDP_waitVSync();
 }
 
 // Tronque/centre ≤ 40 colonnes
@@ -272,7 +282,7 @@ static void showTitle(void)
     const u16 y = PRESS_START_ROW;
     u16 blink = 0;
 
-    // Affichage initial immédiat
+    // Affichage initial
     {
         u16 len = strlen(pressStart);
         if (len > MAX_COLS) len = MAX_COLS;
@@ -303,7 +313,10 @@ static void showTitle(void)
 int main(bool hardReset)
 {
     (void)hardReset;
+
+    // Init entrée + police dès le début pour être béton
     JOY_init();
+    VDP_loadFont(&font_default, DMA);
 
     playIntro();
     showTitle();
