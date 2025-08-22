@@ -2,8 +2,8 @@ name: Build & Release SGDK ROM
 
 on:
   push:
-    branches: ["main"]
-    tags: ["v*"]
+    branches: [ "main" ]
+    tags: [ "v*" ]
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,7 @@ jobs:
           echo "Res dir     = ${{ steps.paths.outputs.res_dir }}"
           ls -la "${{ steps.paths.outputs.res_dir }}" || true
 
-      # Sanitize resources.res (CRLF->LF, BOM, accents -> ASCII)
+      # Sanitize resources.res (BOM/accents/CRLF)
       - name: Sanitize resources.res
         shell: bash
         run: |
@@ -48,9 +48,11 @@ jobs:
             echo "---- hexdump (64 bytes) ----"
             head -c 64 "$RES" | hexdump -C || true
             dos2unix "$RES" >/dev/null 2>&1 || true
+            # supprime BOM si présent
             if [ "$(head -c 3 "$RES" | hexdump -v -e '/1 "%02X"')" = "EFBBBF" ]; then
               tail -c +4 "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             fi
+            # translit commentaires (accents -> ascii)
             iconv -f UTF-8 -t ASCII//TRANSLIT -c "$RES" > "$RES.tmp" && mv "$RES.tmp" "$RES"
             echo "=== AFTER sanitize ==="
             wc -c "$RES" || true
@@ -60,51 +62,50 @@ jobs:
             echo "::warning::${RES} introuvable"
           fi
 
-      # Prépare les PNG (320x224, 16 couleurs, alpha off)
+      # Prépare les PNGs (fonds vs overlays)
       - name: Prepare PNGs for SGDK (separate BG and overlays)
-shell: bash
-run: |
-    set -euo pipefail
-    sudo apt-get update -y
-    sudo apt-get install -y imagemagick
-    RES_DIR="${{ steps.paths.outputs.res_dir }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y imagemagick
+          RES_DIR="${{ steps.paths.outputs.res_dir }}"
 
-    echo "[BG] resize 320x224, 16 cols, pas d'alpha"
-    for n in intro1 intro2 intro3 title_bg; do
-      img="${RES_DIR}/${n}.PNG"
-      [ -f "$img" ] || continue
-      echo "  -> $(basename "$img")"
-      convert "$img" \
-        -resize 320x224\! \
-        -alpha off -background black -alpha remove \
-        -dither None -colors 16 -type palette \
-        PNG8:"$img"
-    done
+          echo "[BG] 320x224, 16 couleurs, pas d'alpha"
+          for n in intro1 intro2 intro3 title_bg; do
+            img="${RES_DIR}/${n}.PNG"
+            [ -f "$img" ] || continue
+            echo "  -> $(basename "$img")"
+            convert "$img" \
+              -resize 320x224\! \
+              -alpha off -background black -alpha remove \
+              -dither None -colors 16 -type palette \
+              PNG8:"$img"
+          done
 
-    echo "[OVERLAYS] pas de resize, on conserve l'alpha"
-    for n in jimmy houcine logo; do
-      img="${RES_DIR}/${n}.PNG"
-      [ -f "$img" ] || continue
-      echo "  -> $(basename "$img")"
-      # conserve l’alpha, quantifie en 16 couleurs
-      convert "$img" \
-        -alpha on \
-        -dither None -colors 16 -type palette \
-        PNG8:"$img"
-    done
+          echo "[OVERLAYS] pas de resize, conserve alpha, 16 couleurs"
+          for n in jimmy houcine logo; do
+            img="${RES_DIR}/${n}.PNG"
+            [ -f "$img" ] || continue
+            echo "  -> $(basename "$img")"
+            convert "$img" \
+              -alpha on \
+              -dither None -colors 16 -type palette \
+              PNG8:"$img"
+          done
 
-    echo "[Check] nombre de couleurs"
-    for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-      [ -f "$img" ] || continue
-      c=$(identify -format "%k" "$img" || echo "?")
-      echo "  $(basename "$img"): $c couleurs"
-    done
+          echo "[Check] nombre de couleurs"
+          shopt -s nullglob
+          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
+            [ -f "$img" ] || continue
+            c=$(identify -format "%k" "$img" || echo "?")
+            echo "  $(basename "$img"): $c couleurs"
+          done
 
       # Décompresse Intro.vgz -> intro.vgm (optionnel)
       - name: Decompress VGZ -> VGM
         shell: bash
         run: |
-          set -euo pipefail
           RES_DIR="${{ steps.paths.outputs.res_dir }}"
           SRC=$(ls "$RES_DIR" | grep -iE '^intro\.vgz$' || true)
           if [ -n "$SRC" ]; then
@@ -127,7 +128,7 @@ run: |
           echo "--- HEAD ---"
           head -n 20 "${{ steps.paths.outputs.res_dir }}/resources.res"
 
-      # Build SGDK dans Docker (répertoire de travail = projet)
+      # Build SGDK dans Docker (rép. de travail = projet)
       - name: Build with SGDK (Docker)
         uses: addnab/docker-run-action@v3
         with:
@@ -147,7 +148,7 @@ run: |
             mkdir -p src/boot out
             cp /sgdk/src/boot/sega.s src/boot/sega.s
             cp /sgdk/src/boot/rom_head.c src/boot/rom_head.c
-            # Test direct rescomp (debug)
+            # Test direct rescomp avant make (debug)
             echo "Test direct rescomp:"
             /usr/bin/java -jar /sgdk/bin/rescomp.jar res/resources.res res/resources.rs -dep out/res/resources.o || true
             echo "*** Lance make ***"
@@ -183,7 +184,7 @@ run: |
           echo "outname=$OUT" >> "$GITHUB_OUTPUT"
           ls -la "$OUT"
 
-      # Upload artifact (v4)
+      # Upload artifact
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
