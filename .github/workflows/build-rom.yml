@@ -61,56 +61,44 @@ jobs:
           fi
 
       # Prépare les PNG (320x224, 16 couleurs, alpha off)
-      - name: Prepare PNGs for SGDK (backgrounds vs overlays)
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y imagemagick
+      - name: Prepare PNGs for SGDK (separate BG and overlays)
+shell: bash
+run: |
+    set -euo pipefail
+    sudo apt-get update -y
+    sudo apt-get install -y imagemagick
+    RES_DIR="${{ steps.paths.outputs.res_dir }}"
 
-          RES_DIR="${{ steps.paths.outputs.res_dir }}"
+    echo "[BG] resize 320x224, 16 cols, pas d'alpha"
+    for n in intro1 intro2 intro3 title_bg; do
+      img="${RES_DIR}/${n}.PNG"
+      [ -f "$img" ] || continue
+      echo "  -> $(basename "$img")"
+      convert "$img" \
+        -resize 320x224\! \
+        -alpha off -background black -alpha remove \
+        -dither None -colors 16 -type palette \
+        PNG8:"$img"
+    done
 
-          echo "[Backgrounds] 320x224, 16 colors, no alpha"
-          for f in intro1.PNG intro2.PNG intro3.PNG title_bg.PNG; do
-            if [ -f "$RES_DIR/$f" ]; then
-              echo "  -> $f"
-              convert "$RES_DIR/$f" \
-                -resize 320x224\! \
-                -alpha off -background black -alpha remove \
-                -dither None -colors 16 -type palette \
-                PNG8:"$RES_DIR/$f"
-            fi
-          done
+    echo "[OVERLAYS] pas de resize, on conserve l'alpha"
+    for n in jimmy houcine logo; do
+      img="${RES_DIR}/${n}.PNG"
+      [ -f "$img" ] || continue
+      echo "  -> $(basename "$img")"
+      # conserve l’alpha, quantifie en 16 couleurs
+      convert "$img" \
+        -alpha on \
+        -dither None -colors 16 -type palette \
+        PNG8:"$img"
+    done
 
-          echo "[Overlays] keep alpha, 16 colors, sized to fit VRAM"
-          if [ -f "$RES_DIR/jimmy.PNG" ]; then
-            echo "  -> jimmy.PNG (128x160)"
-            convert "$RES_DIR/jimmy.PNG" \
-              -resize 128x160\! \
-              -dither None -colors 16 \
-              PNG8:"$RES_DIR/jimmy.PNG"
-          fi
-          if [ -f "$RES_DIR/houcine.PNG" ]; then
-            echo "  -> houcine.PNG (128x160)"
-            convert "$RES_DIR/houcine.PNG" \
-              -resize 128x160\! \
-              -dither None -colors 16 \
-              PNG8:"$RES_DIR/houcine.PNG"
-          fi
-          if [ -f "$RES_DIR/logo.PNG" ]; then
-            echo "  -> logo.PNG (192x64)"
-            convert "$RES_DIR/logo.PNG" \
-              -resize 192x64\! \
-              -dither None -colors 16 \
-              PNG8:"$RES_DIR/logo.PNG"
-          fi
-
-          echo "[Check colors]"
-          for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
-            [ -f "$img" ] || continue
-            c=$(identify -format "%k" "$img" || echo "?")
-            echo "  $(basename "$img") -> colors=$c"
-          done
+    echo "[Check] nombre de couleurs"
+    for img in "$RES_DIR"/*.PNG "$RES_DIR"/*.png; do
+      [ -f "$img" ] || continue
+      c=$(identify -format "%k" "$img" || echo "?")
+      echo "  $(basename "$img"): $c couleurs"
+    done
 
       # Décompresse Intro.vgz -> intro.vgm (optionnel)
       - name: Decompress VGZ -> VGM
